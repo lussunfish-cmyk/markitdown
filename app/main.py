@@ -6,22 +6,24 @@ from pathlib import Path
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
-from starlette.background import BackgroundTask
+from pydantic import BaseModel
 
 from markitdown import MarkItDown
 
 app = FastAPI(title="MarkItDown API")
 
-
-def _cleanup_file(path: str) -> None:
-    try:
-        os.remove(path)
-    except FileNotFoundError:
-        pass
+# Output directory for converted markdown files
+OUTPUT_DIR = Path(os.getenv("MARKITDOWN_OUTPUT_DIR", "/app/output"))
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 
-@app.post("/convert")
-async def convert_file(file: UploadFile = File(...)) -> FileResponse:
+class ConvertResponse(BaseModel):
+    filename: str
+    message: str
+
+
+@app.post("/convert", response_model=ConvertResponse)
+async def convert_file(file: UploadFile = File(...)) -> ConvertResponse:
     if not file.filename:
         raise HTTPException(status_code=400, detail="File name is required")
 
@@ -40,16 +42,18 @@ async def convert_file(file: UploadFile = File(...)) -> FileResponse:
         if not markdown_text:
             raise HTTPException(status_code=500, detail="Failed to extract markdown")
     finally:
-        _cleanup_file(input_path)
+        try:
+            os.remove(input_path)
+        except FileNotFoundError:
+            pass
 
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".md") as tmp_out:
-        tmp_out.write(markdown_text.encode("utf-8"))
-        output_path = tmp_out.name
+    output_filename = f"{Path(file.filename).stem}.md"
+    output_path = OUTPUT_DIR / output_filename
 
-    filename = f"{Path(file.filename).stem}.md"
-    return FileResponse(
-        output_path,
-        media_type="text/markdown",
-        filename=filename,
-        background=BackgroundTask(_cleanup_file, output_path),
+    with open(output_path, "w", encoding="utf-8") as f:
+        f.write(markdown_text)
+
+    return ConvertResponse(
+        filename=output_filename,
+        message=f"File converted successfully and saved to {output_path}",
     )

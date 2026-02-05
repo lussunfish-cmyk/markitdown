@@ -1,3 +1,5 @@
+# commit 1
+
 FastAPI 업로드 API로 파일을 받아 `markitdown`으로 변환한 뒤, 변환 결과를 `.md` 파일로 내려받게 했어요. Docker 이미지로 바로 실행 가능하도록 Dockerfile과 .dockerignore, requirements.txt도 추가했습니다.
 
 **변경 내용**
@@ -22,3 +24,41 @@ curl -X POST "http://localhost:8000/convert" \
 1. `docker build -t markitdown-api .`
 2. `docker run --rm -p 8000:8000 markitdown-api`
 
+
+# commit 2
+
+## 변경 사항
+
+**1. main.py**
+- 출력 디렉토리를 `/app/output`으로 설정 (환경 변수로 변경 가능)
+- 임시 파일 대신 출력 디렉토리에 MD 파일 저장
+- 응답을 JSON 형식으로 변경 (파일명과 저장 경로 포함)
+
+**2. Dockerfile**
+- `/app/output` 디렉토리 생성
+- `VOLUME ["/app/output"]`으로 마운트 포인트 정의
+
+**3. docker-compose.yml** (신규)
+- `./output` 디렉토리를 컨테이너의 `/app/output`에 마운트
+- 포트 8000 노출
+- 환경 변수 설정
+
+**4. USAGE.md** (신규)
+- 사용 방법 및 예시 문서
+
+## 실행 방법
+
+```bash
+# Docker Compose로 실행 (권장)
+docker-compose up --build -d
+
+# 파일 변환
+curl -X POST "http://localhost:8000/convert" \
+  -F "file=@test.pdf"
+
+# 변환된 파일은 ./output 디렉토리에 자동 저장됨
+```
+
+변환된 MD 파일이 호스트의 `./output/` 디렉토리에 저장됩니다!
+
+Made changes.

@@ -1,0 +1,12 @@
+version: '3.8'
+
+services:
+  markitdown-api:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./output:/app/output
+    environment:
+      - MARKITDOWN_OUTPUT_DIR=/app/output
+    restart: unless-stopped

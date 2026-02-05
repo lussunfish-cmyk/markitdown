@@ -181,10 +181,6 @@ Dockerfile: pandoc 설치 제거
 이미지 빌드 시간이 더 빨라집니다 (Pandoc 제거로 약 20-30초 단축)
 현재는 LibreOffice만 사용하여 .doc → .docx 변환하고 있으므로 불필요한 패키지가 제거되었습니다. ✅
 
-# commit 9 
-
-변경사항:
-
 app/main.py → converter.py
 Dockerfile: app.main:app → app.converter:app
 재시작:

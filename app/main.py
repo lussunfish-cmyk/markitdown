@@ -41,6 +41,8 @@ async def convert_file(file: UploadFile = File(...)) -> ConvertResponse:
             markdown_text = getattr(result, "text", None)
         if not markdown_text:
             raise HTTPException(status_code=500, detail="Failed to extract markdown")
+        # 폼 피드 문자 제거
+        markdown_text = markdown_text.replace('\f', '')
     finally:
         try:
             os.remove(input_path)

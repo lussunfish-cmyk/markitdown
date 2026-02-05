@@ -62,3 +62,10 @@ curl -X POST "http://localhost:8000/convert" \
 변환된 MD 파일이 호스트의 `./output/` 디렉토리에 저장됩니다!
 
 Made changes.
+
+# commit 3
+
+완료되었습니다. 이제 markdown 변환 후 폼 피드 문자(`\f`)가 자동으로 제거됩니다.
+
+Made changes.
+

@@ -69,3 +69,41 @@ Made changes.
 
 Made changes.
 
+
+# commit 4
+
+주요 변경사항
+main.py
+
+convert_single_file() 함수 추가: 파일 변환 로직을 재사용 가능하도록 분리
+/convert-folder 엔드포인트 추가: 입력 폴더의 모든 지원 파일을 순차 처리
+/supported-formats 엔드포인트 추가: 지원 파일 형식 조회
+FolderConvertResponse 모델 추가: 배치 결과 응답
+docker-compose.yml
+
+input 볼륨 마운트 추가
+Dockerfile
+
+/app/input 디렉토리 생성
+VOLUME에 input 추가
+USAGE.md
+
+배치 변환 사용 방법 추가
+예제 및 응답 형식 추가
+사용 방법
+1. 파일을 input 폴더에 넣기
+
+Edited
+.gitignore+3-1
+2. 배치 변환 실행
+
+
+curl -X POST "http://localhost:8000/convert-folder"
+3. 결과 확인
+
+
+ls ./output/# document.md# presentation.md# spreadsheet.md
+26가지 파일 형식 (PDF, DOCX, XLSX, CSV, JSON, HTML, 이미지, 오디오 등)을 지원합니다.
+
+
+

@@ -7,6 +7,8 @@ services:
       - "8000:8000"
     volumes:
       - ./output:/app/output
+      - ./input:/app/input
     environment:
       - MARKITDOWN_OUTPUT_DIR=/app/output
+      - MARKITDOWN_INPUT_DIR=/app/input
     restart: unless-stopped

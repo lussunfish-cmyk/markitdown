@@ -7,9 +7,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app ./app
 
-RUN mkdir -p /app/output
+RUN mkdir -p /app/output /app/input
 
-VOLUME ["/app/output"]
+VOLUME ["/app/output", "/app/input"]
 
 EXPOSE 8000
 

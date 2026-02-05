@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from markitdown import MarkItDown
@@ -120,12 +121,14 @@ def convert_single_file(file_path: Path) -> tuple[bool, str, str]:
                 pass
 
 
-@app.post("/convert", response_model=ConvertResponse)
-async def convert_file(file: UploadFile = File(...)) -> ConvertResponse:
+@app.post("/convert")
+async def convert_file(file: UploadFile = File(...)) -> FileResponse:
+    """Convert a single file and return it for download."""
     if not file.filename:
         raise HTTPException(status_code=400, detail="File name is required")
 
-    input_suffix = Path(file.filename).suffix or ".bin"
+    input_suffix = Path(file.filename).suffix.lower() or ".bin"
+    original_filename = Path(file.filename).stem
 
     with tempfile.NamedTemporaryFile(delete=False, suffix=input_suffix) as tmp_in:
         tmp_in.write(await file.read())
@@ -135,16 +138,23 @@ async def convert_file(file: UploadFile = File(...)) -> ConvertResponse:
         success, output_filename, msg = convert_single_file(Path(input_path))
         if not success:
             raise HTTPException(status_code=500, detail=msg)
+        
+        # File is already saved in OUTPUT_DIR by convert_single_file
+        output_path = OUTPUT_DIR / output_filename
+        
+        if not output_path.exists():
+            raise HTTPException(status_code=500, detail="Converted file not found")
+        
+        return FileResponse(
+            path=str(output_path),
+            media_type="text/markdown",
+            filename=output_filename
+        )
     finally:
         try:
             os.remove(input_path)
         except FileNotFoundError:
             pass
-
-    return ConvertResponse(
-        filename=output_filename,
-        message=msg,
-    )
 
 
 @app.post("/convert-folder", response_model=FolderConvertResponse)

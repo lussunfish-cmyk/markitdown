@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import subprocess
 import tempfile
 from pathlib import Path
 from typing import Optional
@@ -42,14 +43,56 @@ class FolderConvertResponse(BaseModel):
     message: str
 
 
+def convert_doc_to_docx(doc_path: Path) -> tuple[Optional[Path], str]:
+    """Convert .doc file to .docx using LibreOffice. Returns (path to .docx file, error message)."""
+    try:
+        # Use LibreOffice to convert .doc to .docx
+        result = subprocess.run(
+            [
+                "libreoffice",
+                "--headless",
+                "--convert-to", "docx",
+                "--outdir", str(doc_path.parent),
+                str(doc_path)
+            ],
+            capture_output=True,
+            timeout=60,
+            text=True
+        )
+        
+        docx_path = doc_path.parent / f"{doc_path.stem}.docx"
+        
+        if result.returncode == 0 and docx_path.exists():
+            return docx_path, ""
+        else:
+            error_output = result.stderr if result.stderr else result.stdout
+            return None, f"LibreOffice conversion failed: {error_output}"
+    except subprocess.TimeoutExpired:
+        return None, "LibreOffice conversion timeout (>60s)"
+    except FileNotFoundError:
+        return None, "LibreOffice not found"
+    except Exception as e:
+        return None, f"Unexpected error during conversion: {str(e)}"
+
+
 def convert_single_file(file_path: Path) -> tuple[bool, str, str]:
     """Convert a single file to markdown. Returns (success, filename, message)."""
     if file_path.suffix.lower() not in SUPPORTED_FORMATS:
         return False, file_path.name, f"Unsupported format: {file_path.suffix}"
 
+    actual_file_path = file_path
+    temp_converted_docx = None
+
     try:
+        # Convert .doc to .docx if needed
+        if file_path.suffix.lower() == ".doc":
+            temp_converted_docx, error_msg = convert_doc_to_docx(file_path)
+            if not temp_converted_docx:
+                return False, file_path.name, f"Failed to convert .doc to .docx: {error_msg}"
+            actual_file_path = temp_converted_docx
+
         converter = MarkItDown()
-        result = converter.convert(str(file_path))
+        result = converter.convert(str(actual_file_path))
         markdown_text = getattr(result, "text_content", None)
         if not markdown_text:
             markdown_text = getattr(result, "text", None)
@@ -68,6 +111,13 @@ def convert_single_file(file_path: Path) -> tuple[bool, str, str]:
         return True, output_filename, "Converted successfully"
     except Exception as e:
         return False, file_path.name, f"Error: {str(e)}"
+    finally:
+        # Clean up temporary .docx file if created
+        if temp_converted_docx and temp_converted_docx.exists():
+            try:
+                temp_converted_docx.unlink()
+            except Exception:
+                pass
 
 
 @app.post("/convert", response_model=ConvertResponse)

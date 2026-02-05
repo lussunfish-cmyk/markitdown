@@ -107,3 +107,26 @@ ls ./output/# document.md# presentation.md# spreadsheet.md
 
 
 
+
+# commit 5
+
+아! Pandoc이 .doc 형식을 지원하지 않습니다. Pandoc은 .docx만 지원합니다.
+
+.doc → .docx 변환에는 LibreOffice를 사용해야 합니다. 수정하겠습니다:
+
+Replacing 21 lines with 22 lines in Dockerfile
+
+Replacing 24 lines with 30 lines in main.py
+
+완료했습니다! LibreOffice를 사용하도록 변경했습니다.
+
+변경사항:
+
+Dockerfile: LibreOffice 설치 추가
+main.py: LibreOffice headless 모드로 .doc → .docx 변환
+재빌드 및 테스트:
+
+Edited
+main.py+19-13
+⚠️ 주의: LibreOffice 설치로 인해 이미지 빌드 시간이 3~5분 걸릴 수 있습니다.
+

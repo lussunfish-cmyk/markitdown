@@ -13,7 +13,7 @@ class OllamaConfig:
     BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
     
     # 모델 설정
-    EMBEDDING_MODEL = os.getenv("OLLAMA_EMBEDDING_MODEL", "qllama/multilingual-e5-large-instruct")
+    EMBEDDING_MODEL = os.getenv("OLLAMA_EMBEDDING_MODEL", "mxbai-embed-large")
     LLM_MODEL = os.getenv("OLLAMA_LLM_MODEL", "gemma2")
     
     # 타임아웃 및 재시도 설정

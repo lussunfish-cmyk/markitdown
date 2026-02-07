@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 """
 RAG 파이프라인 테스트 스크립트.
+
+Phase 2: 성능 개선 테스트 포함
+- 캐싱 테스트
+- 스트리밍 테스트
+- 메트릭 측정 테스트
 """
 
 import sys
@@ -348,9 +353,144 @@ def test_6_chat_with_history():
         return False
 
 
+def test_7_metrics():
+    """성능 메트릭 테스트 (Phase 2)"""
+    logger.info("\n" + "="*70)
+    logger.info("테스트 7: 성능 메트릭 (Phase 2)")
+    logger.info("="*70)
+    
+    try:
+        rag = create_rag_pipeline(retriever_type="vector")
+        
+        # 메트릭 포함하여 쿼리
+        question = "LTE의 속도는?"
+        logger.info(f"\n질문: {question}")
+        
+        result = rag.query(question, top_k=3, include_metrics=True)
+        
+        # 메트릭 확인
+        assert result.metrics is not None, "메트릭이 생성되지 않았습니다"
+        
+        logger.info(f"\n메트릭:")
+        logger.info(f"  전체 시간: {result.metrics.query_time:.3f}초")
+        logger.info(f"  검색 시간: {result.metrics.search_time:.3f}초")
+        logger.info(f"  LLM 시간: {result.metrics.llm_time:.3f}초")
+        logger.info(f"  청크 수: {result.metrics.num_chunks}")
+        logger.info(f"  컨텍스트 길이: {result.metrics.context_length}자")
+        
+        # 메트릭 검증
+        assert result.metrics.query_time > 0, "쿼리 시간이 측정되지 않았습니다"
+        assert result.metrics.search_time > 0, "검색 시간이 측정되지 않았습니다"
+        assert result.metrics.llm_time > 0, "LLM 시간이 측정되지 않았습니다"
+        assert result.metrics.num_chunks > 0, "청크가 사용되지 않았습니다"
+        
+        logger.info("\n✅ 테스트 7 통과")
+        return True
+    
+    except Exception as e:
+        logger.error(f"\n❌ 테스트 7 실패: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
+def test_8_caching():
+    """캐싱 테스트 (Phase 2)"""
+    logger.info("\n" + "="*70)
+    logger.info("테스트 8: 캐싱 (Phase 2)")
+    logger.info("="*70)
+    
+    try:
+        rag = create_rag_pipeline(retriever_type="vector", enable_cache=True)
+        
+        # 캐시 초기화
+        RAGPipeline.clear_cache()
+        
+        # 첫 번째 쿼리 (캐시 미스)
+        question = "5G의 지연시간은?"
+        logger.info(f"\n첫 번째 쿼리: {question}")
+        result1 = rag.query(question, include_metrics=True)
+        time1 = result1.metrics.query_time if result1.metrics else 0
+        
+        # 두 번째 동일 쿼리 (캐시 히트)
+        logger.info(f"\n두 번째 쿼리 (동일): {question}")
+        result2 = rag.query(question, include_metrics=True)
+        time2 = result2.metrics.query_time if result2.metrics else 0
+        
+        # 캐시 통계 확인
+        stats = RAGPipeline.get_cache_stats()
+        logger.info(f"\n캐시 통계:")
+        logger.info(f"  캐시 히트: {stats['cache_hits']}")
+        logger.info(f"  캐시 미스: {stats['cache_misses']}")
+        logger.info(f"  히트율: {stats['hit_rate_percent']}%")
+        logger.info(f"  캐시 크기: {stats['cache_size']}")
+        
+        logger.info(f"\n성능 비교:")
+        logger.info(f"  첫 번째 쿼리: {time1:.3f}초")
+        logger.info(f"  두 번째 쿼리: {time2:.3f}초")
+        if time1 > 0 and time2 > 0:
+            speedup = (time1 - time2) / time1 * 100
+            logger.info(f"  성능 향상: {speedup:.1f}%")
+        
+        # 캐시가 작동했는지 확인
+        assert stats['cache_hits'] >= 1, "캐시 히트가 발생하지 않았습니다"
+        
+        logger.info("\n✅ 테스트 8 통과")
+        return True
+    
+    except Exception as e:
+        logger.error(f"\n❌ 테스트 8 실패: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
+def test_9_streaming():
+    """스트리밍 응답 테스트 (Phase 2)"""
+    logger.info("\n" + "="*70)
+    logger.info("테스트 9: 스트리밍 응답 (Phase 2)")
+    logger.info("="*70)
+    
+    try:
+        rag = create_rag_pipeline(retriever_type="vector")
+        
+        question = "Python의 주요 특징은?"
+        logger.info(f"\n질문: {question}")
+        logger.info("\n스트리밍 답변:")
+        
+        # 스트리밍 쿼리
+        full_answer = ""
+        chunk_count = 0
+        
+        for chunk in rag.stream_query(question, top_k=3):
+            if isinstance(chunk, str):
+                full_answer += chunk
+                chunk_count += 1
+                # 처음 몇 청크만 출력
+                if chunk_count <= 5:
+                    logger.info(f"  청크 {chunk_count}: '{chunk}'")
+        
+        logger.info(f"\n총 {chunk_count}개 청크 수신")
+        logger.info(f"전체 답변 길이: {len(full_answer)}자")
+        logger.info(f"답변 미리보기:\n{full_answer[:200]}...")
+        
+        # 검증
+        assert chunk_count > 0, "스트리밍 청크가 생성되지 않았습니다"
+        assert len(full_answer) > 0, "답변이 비어있습니다"
+        
+        logger.info("\n✅ 테스트 9 통과")
+        return True
+    
+    except Exception as e:
+        logger.error(f"\n❌ 테스트 9 실패: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
 if __name__ == "__main__":
     logger.info("\n" + "="*70)
-    logger.info("RAG 파이프라인 테스트 시작")
+    logger.info("RAG 파이프라인 테스트 시작 (Phase 2 포함)")
     logger.info("="*70)
     
     # 테스트 데이터 설정
@@ -366,6 +506,9 @@ if __name__ == "__main__":
         "test_4_custom_parameters": test_4_custom_parameters(),
         "test_5_singleton_pattern": test_5_singleton_pattern(),
         "test_6_chat_with_history": test_6_chat_with_history(),
+        "test_7_metrics": test_7_metrics(),
+        "test_8_caching": test_8_caching(),
+        "test_9_streaming": test_9_streaming(),
     }
     
     # 결과 요약
@@ -376,7 +519,20 @@ if __name__ == "__main__":
     passed = sum(1 for result in results.values() if result)
     total = len(results)
     
-    for test_name, result in results.items():
+    # Phase 구분
+    phase1_tests = ["test_1_basic_query", "test_2_advanced_retriever", "test_3_no_results",
+                    "test_4_custom_parameters", "test_5_singleton_pattern", "test_6_chat_with_history"]
+    phase2_tests = ["test_7_metrics", "test_8_caching", "test_9_streaming"]
+    
+    logger.info("\n[Phase 1 테스트]")
+    for test_name in phase1_tests:
+        result = results[test_name]
+        status = "✅ 통과" if result else "❌ 실패"
+        logger.info(f"{test_name}: {status}")
+    
+    logger.info("\n[Phase 2 테스트 - 성능 개선]")
+    for test_name in phase2_tests:
+        result = results[test_name]
         status = "✅ 통과" if result else "❌ 실패"
         logger.info(f"{test_name}: {status}")
     

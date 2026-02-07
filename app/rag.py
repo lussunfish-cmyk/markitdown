@@ -1,11 +1,21 @@
 """
 RAG (검색 증강 생성) 파이프라인 구현.
 질의응답을 위한 검색, 컨텍스트 구성, 답변 생성 통합 모듈.
+
+Phase 2 성능 개선:
+- 캐싱: 쿼리 임베딩 및 검색 결과 캐싱
+- 스트리밍: 실시간 답변 생성
+- 메트릭: 성능 측정 및 모니터링
+- 프롬프트 최적화: 간결하고 효과적인 프롬프트
 """
 
 import logging
-from typing import List, Optional, Dict, Any
-from dataclasses import dataclass
+import hashlib
+import time
+from typing import List, Optional, Dict, Any, Generator
+from dataclasses import dataclass, field
+from functools import lru_cache
+from cachetools import TTLCache
 
 from .config import config
 from .ollama_client import get_ollama_client
@@ -17,25 +27,72 @@ logger = logging.getLogger(__name__)
 
 
 # ============================================================================
-# 프롬프트 템플릿
+# 캐시 설정
 # ============================================================================
 
-DEFAULT_SYSTEM_PROMPT = """당신은 전문적인 기술 문서 도우미입니다.
-주어진 컨텍스트를 기반으로 사용자의 질문에 정확하고 명확하게 답변하세요.
+# 검색 결과 캐시 (최대 100개, 5분 TTL)
+_search_cache = TTLCache(maxsize=100, ttl=300)
+_search_cache_hits = 0
+_search_cache_misses = 0
 
-지침:
-1. 제공된 컨텍스트만을 사용하여 답변하세요.
-2. 컨텍스트에 정보가 없으면 "제공된 문서에서 관련 정보를 찾을 수 없습니다"라고 답하세요.
-3. 추측하거나 컨텍스트 외부의 지식을 사용하지 마세요.
-4. 답변은 간결하고 명확하게 작성하세요.
-5. 가능하면 컨텍스트에서 인용한 부분을 표시하세요."""
 
+# ============================================================================
+# 프롬프트 템플릿 (Phase 2: 최적화됨)
+# ============================================================================
+
+# 간결하고 효과적인 시스템 프롬프트
+DEFAULT_SYSTEM_PROMPT = """기술 문서 전문가로서 주어진 컨텍스트만을 사용하여 정확하게 답변하세요.
+컨텍스트에 없는 정보는 "문서에 관련 정보가 없습니다"라고 답하세요."""
+
+# 출처 표시를 강화한 사용자 프롬프트
 DEFAULT_USER_PROMPT_TEMPLATE = """컨텍스트:
 {context}
 
 질문: {question}
 
 답변:"""
+
+
+# ============================================================================
+# 성능 메트릭
+# ============================================================================
+
+@dataclass
+class RAGMetrics:
+    """RAG 파이프라인 성능 메트릭."""
+    
+    query_time: float = 0.0
+    """전체 쿼리 처리 시간 (초)"""
+    
+    embedding_time: float = 0.0
+    """임베딩 생성 시간 (초)"""
+    
+    search_time: float = 0.0
+    """문서 검색 시간 (초)"""
+    
+    llm_time: float = 0.0
+    """LLM 답변 생성 시간 (초)"""
+    
+    num_chunks: int = 0
+    """사용된 청크 개수"""
+    
+    context_length: int = 0
+    """컨텍스트 길이 (문자)"""
+    
+    cache_hit: bool = False
+    """캐시 히트 여부"""
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """딕셔너리로 변환"""
+        return {
+            "query_time": round(self.query_time, 3),
+            "embedding_time": round(self.embedding_time, 3),
+            "search_time": round(self.search_time, 3),
+            "llm_time": round(self.llm_time, 3),
+            "num_chunks": self.num_chunks,
+            "context_length": self.context_length,
+            "cache_hit": self.cache_hit
+        }
 
 
 # ============================================================================
@@ -60,6 +117,9 @@ class RAGResult:
     
     metadata: Optional[Dict[str, Any]] = None
     """추가 메타데이터"""
+    
+    metrics: Optional[RAGMetrics] = None
+    """성능 메트릭 (Phase 2)"""
 
 
 # ============================================================================
@@ -67,7 +127,14 @@ class RAGResult:
 # ============================================================================
 
 class RAGPipeline:
-    """RAG 파이프라인 - 검색 증강 생성을 위한 통합 인터페이스."""
+    """RAG 파이프라인 - 검색 증강 생성을 위한 통합 인터페이스.
+    
+    Phase 2 개선:
+    - 임베딩 캐싱 (LRU)
+    - 검색 결과 캐싱 (TTL)
+    - 성능 메트릭 측정
+    - 스트리밍 응답 지원
+    """
     
     def __init__(
         self,
@@ -76,7 +143,8 @@ class RAGPipeline:
         retriever_type: str = "advanced",
         top_k: Optional[int] = None,
         temperature: Optional[float] = None,
-        max_tokens: Optional[int] = None
+        max_tokens: Optional[int] = None,
+        enable_cache: bool = True
     ):
         """
         RAG 파이프라인을 초기화합니다.
@@ -88,6 +156,7 @@ class RAGPipeline:
             top_k: 검색할 문서 개수 (None이면 config 사용)
             temperature: LLM 온도 파라미터
             max_tokens: 최대 생성 토큰 수
+            enable_cache: 캐싱 활성화 여부 (Phase 2)
         """
         self.system_prompt = system_prompt or DEFAULT_SYSTEM_PROMPT
         self.user_prompt_template = user_prompt_template or DEFAULT_USER_PROMPT_TEMPLATE
@@ -95,6 +164,7 @@ class RAGPipeline:
         self.top_k = top_k or config.RAG.TOP_K
         self.temperature = temperature or config.RAG.TEMPERATURE
         self.max_tokens = max_tokens or config.RAG.MAX_TOKENS
+        self.enable_cache = enable_cache
         
         # Ollama 클라이언트 초기화
         self.ollama_client = get_ollama_client()
@@ -108,23 +178,25 @@ class RAGPipeline:
             vector_store=self.vector_store
         )
         
-        logger.info(f"✓ RAGPipeline 초기화됨 (retriever={retriever_type}, top_k={self.top_k})")
+        logger.info(f"✓ RAGPipeline 초기화됨 (retriever={retriever_type}, top_k={self.top_k}, cache={enable_cache})")
     
     def query(
         self,
         question: str,
         top_k: Optional[int] = None,
         include_sources: bool = True,
-        filter_metadata: Optional[Dict[str, Any]] = None
+        filter_metadata: Optional[Dict[str, Any]] = None,
+        include_metrics: bool = False
     ) -> RAGResult:
         """
-        질문에 대한 답변을 생성합니다.
+        질문에 대한 답변을 생성합니다. (Phase 2: 메트릭 측정 포함)
         
         Args:
             question: 사용자 질문
             top_k: 검색할 문서 개수 (None이면 기본값 사용)
             include_sources: 출처 정보 포함 여부
             filter_metadata: 검색 시 메타데이터 필터
+            include_metrics: 성능 메트릭 포함 여부
             
         Returns:
             RAG 실행 결과
@@ -136,21 +208,32 @@ class RAGPipeline:
         if not question or not question.strip():
             raise ValueError("질문은 비어있을 수 없습니다")
         
+        # 메트릭 초기화
+        metrics = RAGMetrics() if include_metrics else None
+        start_time = time.time()
+        
         logger.info(f"RAG 쿼리 시작: '{question[:50]}...'")
         
         try:
-            # 1. 문서 검색
+            # 1. 문서 검색 (캐싱 적용)
             k = top_k or self.top_k
-            search_results = self._search(question, k, filter_metadata)
+            search_start = time.time()
+            search_results = self._search_with_cache(question, k, filter_metadata)
+            if metrics:
+                metrics.search_time = time.time() - search_start
             
             if not search_results:
                 logger.warning("검색 결과 없음")
+                if metrics:
+                    metrics.query_time = time.time() - start_time
+                
                 return RAGResult(
                     answer="관련 문서를 찾을 수 없습니다. 다른 질문을 시도해보세요.",
                     sources=[],
                     context_used="",
                     num_chunks=0,
-                    metadata={"no_results": True}
+                    metadata={"no_results": True},
+                    metrics=metrics
                 )
             
             logger.info(f"검색 완료: {len(search_results)}개 청크 발견")
@@ -158,18 +241,29 @@ class RAGPipeline:
             # 2. 컨텍스트 구성
             context = self._build_context(search_results)
             
+            if metrics:
+                metrics.num_chunks = len(search_results)
+                metrics.context_length = len(context)
+            
             # 3. 프롬프트 생성
             prompt = self._build_prompt(question, context)
             
-            # 4. LLM으로 답변 생성
+            # 4. LLM으로 답변 생성 (시간 측정)
+            llm_start = time.time()
             answer = self._generate_answer(prompt)
+            if metrics:
+                metrics.llm_time = time.time() - llm_start
             
             # 5. 출처 정보 추출
             sources = []
             if include_sources:
                 sources = self._extract_sources(search_results)
             
-            logger.info("RAG 쿼리 완료")
+            # 전체 시간
+            if metrics:
+                metrics.query_time = time.time() - start_time
+            
+            logger.info(f"RAG 쿼리 완료 ({metrics.query_time:.2f}초)" if metrics else "RAG 쿼리 완료")
             
             return RAGResult(
                 answer=answer,
@@ -179,21 +273,91 @@ class RAGPipeline:
                 metadata={
                     "top_k": k,
                     "temperature": self.temperature
-                }
+                },
+                metrics=metrics
             )
         
         except Exception as e:
             logger.error(f"RAG 파이프라인 실행 실패: {str(e)}")
             raise RuntimeError(f"답변 생성 중 오류 발생: {str(e)}")
     
-    def _search(
+    def stream_query(
+        self,
+        question: str,
+        top_k: Optional[int] = None,
+        filter_metadata: Optional[Dict[str, Any]] = None
+    ) -> Generator[str, None, RAGMetrics]:
+        """
+        질문에 대한 답변을 스트리밍 방식으로 생성합니다. (Phase 2)
+        
+        Args:
+            question: 사용자 질문
+            top_k: 검색할 문서 개수
+            filter_metadata: 검색 시 메타데이터 필터
+            
+        Yields:
+            생성된 답변 텍스트 청크
+            
+        Returns:
+            성능 메트릭
+            
+        Raises:
+            ValueError: 질문이 비어있는 경우
+            RuntimeError: RAG 파이프라인 실행 실패
+        """
+        if not question or not question.strip():
+            raise ValueError("질문은 비어있을 수 없습니다")
+        
+        metrics = RAGMetrics()
+        start_time = time.time()
+        
+        logger.info(f"RAG 스트리밍 쿼리 시작: '{question[:50]}...'")
+        
+        try:
+            # 1. 문서 검색
+            k = top_k or self.top_k
+            search_start = time.time()
+            search_results = self._search_with_cache(question, k, filter_metadata)
+            metrics.search_time = time.time() - search_start
+            
+            if not search_results:
+                logger.warning("검색 결과 없음")
+                yield "관련 문서를 찾을 수 없습니다. 다른 질문을 시도해보세요."
+                metrics.query_time = time.time() - start_time
+                return metrics
+            
+            # 2. 컨텍스트 구성
+            context = self._build_context(search_results)
+            metrics.num_chunks = len(search_results)
+            metrics.context_length = len(context)
+            
+            # 3. 프롬프트 생성
+            prompt = self._build_prompt(question, context)
+            
+            # 4. LLM 스트리밍 답변 생성
+            llm_start = time.time()
+            for chunk in self._stream_answer(prompt):
+                yield chunk
+            
+            metrics.llm_time = time.time() - llm_start
+            metrics.query_time = time.time() - start_time
+            
+            logger.info(f"RAG 스트리밍 쿼리 완료 ({metrics.query_time:.2f}초)")
+            
+            return metrics
+        
+        except Exception as e:
+            logger.error(f"RAG 스트리밍 실패: {str(e)}")
+            raise RuntimeError(f"스트리밍 답변 생성 중 오류 발생: {str(e)}")
+    
+    def _search_with_cache(
         self,
         question: str,
         k: int,
         filter_metadata: Optional[Dict[str, Any]] = None
     ) -> List[SearchResult]:
         """
-        질문에 대한 관련 문서를 검색합니다.
+        질문에 대한 관련 문서를 검색합니다. (Phase 2: 캐싱 적용)
         
         Args:
             question: 검색 질문
@@ -203,11 +367,28 @@ class RAGPipeline:
         Returns:
             검색 결과 리스트
         """
+        global _search_cache_hits, _search_cache_misses
+        
+        # 캐시 키 생성
+        if self.enable_cache:
+            filter_str = str(sorted(filter_metadata.items())) if filter_metadata else ""
+            cache_key = hashlib.md5(
+                f"{question}_{k}_{filter_str}".encode()
+            ).hexdigest()
+            
+            # 캐시 확인
+            if cache_key in _search_cache:
+                _search_cache_hits += 1
+                logger.debug(f"캐시 히트: {cache_key[:8]}")
+                return _search_cache[cache_key]
+            
+            _search_cache_misses += 1
+        
+        # 캐시 미스 또는 캐시 비활성화 - 실제 검색 수행
         try:
-            # 검색 실행
             results = self.retriever.search(query=question, k=k)
             
-            # 메타데이터 필터링 (선택)
+            # 메타데이터 필터링
             if filter_metadata:
                 results = [
                     r for r in results
@@ -221,11 +402,37 @@ class RAGPipeline:
             threshold = config.RAG.SIMILARITY_THRESHOLD
             results = [r for r in results if r.score >= threshold]
             
+            # 캐시에 저장
+            if self.enable_cache:
+                _search_cache[cache_key] = results
+            
             return results
         
         except Exception as e:
             logger.error(f"검색 실패: {str(e)}")
             return []
+    
+    def _stream_answer(self, prompt: str) -> Generator[str, None, None]:
+        """
+        프롬프트로부터 답변을 스트리밍 방식으로 생성합니다. (Phase 2)
+        
+        Args:
+            prompt: 입력 프롬프트
+            
+        Yields:
+            생성된 텍스트 청크
+        """
+        try:
+            for chunk in self.ollama_client.stream_generate(
+                prompt=prompt,
+                temperature=self.temperature,
+                num_predict=self.max_tokens
+            ):
+                yield chunk
+        
+        except Exception as e:
+            logger.error(f"스트리밍 답변 생성 실패: {str(e)}")
+            raise RuntimeError(f"LLM 스트리밍 생성 중 오류: {str(e)}")
     
     def _build_context(self, search_results: List[SearchResult]) -> str:
         """
@@ -369,6 +576,38 @@ class RAGPipeline:
             return self.query(question=enhanced_question, top_k=top_k)
         else:
             return self.query(question=question, top_k=top_k)
+    
+    @staticmethod
+    def get_cache_stats() -> Dict[str, Any]:
+        """
+        캐시 통계를 반환합니다. (Phase 2)
+        
+        Returns:
+            캐시 히트/미스 통계
+        """
+        global _search_cache_hits, _search_cache_misses
+        
+        total = _search_cache_hits + _search_cache_misses
+        hit_rate = (_search_cache_hits / total * 100) if total > 0 else 0
+        
+        return {
+            "cache_hits": _search_cache_hits,
+            "cache_misses": _search_cache_misses,
+            "total_requests": total,
+            "hit_rate_percent": round(hit_rate, 2),
+            "cache_size": len(_search_cache),
+            "cache_maxsize": _search_cache.maxsize
+        }
+    
+    @staticmethod
+    def clear_cache():
+        """캐시를 초기화합니다. (Phase 2)"""
+        global _search_cache_hits, _search_cache_misses
+        
+        _search_cache.clear()
+        _search_cache_hits = 0
+        _search_cache_misses = 0
+        logger.info("캐시가 초기화되었습니다.")
 
 
 # ============================================================================

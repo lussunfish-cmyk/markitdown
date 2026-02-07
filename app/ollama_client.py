@@ -165,6 +165,67 @@ class OllamaClient:
             logger.error(f"텍스트 생성 에러: {str(e)}")
             raise RuntimeError(f"텍스트 생성 실패: {str(e)}")
     
+    def stream_generate(
+        self,
+        prompt: str,
+        temperature: Optional[float] = None,
+        top_p: Optional[float] = None,
+        num_predict: Optional[int] = None
+    ):
+        """
+        LLM을 사용하여 텍스트를 스트리밍 방식으로 생성합니다.
+        
+        Args:
+            prompt: 입력 프롬프트
+            temperature: 샘플링 온도
+            top_p: Top-p 샘플링 파라미터
+            num_predict: 생성할 최대 토큰 수
+            
+        Yields:
+            생성된 텍스트 청크
+            
+        Raises:
+            RuntimeError: 생성이 실패한 경우
+        """
+        if not prompt or not prompt.strip():
+            raise ValueError("프롬프트는 비어있을 수 없습니다")
+        
+        try:
+            options = {}
+            
+            if temperature is not None:
+                options["temperature"] = temperature
+            else:
+                options["temperature"] = config.RAG.TEMPERATURE
+            
+            if top_p is not None:
+                options["top_p"] = top_p
+            else:
+                options["top_p"] = config.RAG.TOP_P
+            
+            if num_predict is not None:
+                options["num_predict"] = num_predict
+            else:
+                options["num_predict"] = config.RAG.MAX_TOKENS
+            
+            # 스트리밍 모드로 생성
+            stream = self.client.generate(
+                model=self.llm_model,
+                prompt=prompt,
+                options=options,
+                stream=True
+            )
+            
+            for chunk in stream:
+                if "response" in chunk:
+                    yield chunk["response"]
+        
+        except ValueError:
+            raise
+        except Exception as e:
+            logger.error(f"스트리밍 생성 에러: {str(e)}")
+            raise RuntimeError(f"스트리밍 생성 실패: {str(e)}")
+    
     def check_model_available(self, model: str) -> bool:
         """
         Ollama에서 모델 사용 가능 여부를 확인합니다.

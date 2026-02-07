@@ -7,10 +7,13 @@ services:
       - ./output:/app/output
       - ./input:/app/input
       - ./debug:/app/debug
+      - ./batch_state:/app/batch_state
+      - ./vector_store:/app/vector_store
       - ./app:/app/app
     environment:
       - MARKITDOWN_OUTPUT_DIR=/app/output
       - MARKITDOWN_INPUT_DIR=/app/input
+      - BATCH_STATE_DIR=/app/batch_state
       - OLLAMA_BASE_URL=http://host.docker.internal:11434
       - OLLAMA_EMBEDDING_MODEL=mxbai-embed-large
       - OLLAMA_LLM_MODEL=gemma2

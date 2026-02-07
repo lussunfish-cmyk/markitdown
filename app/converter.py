@@ -12,10 +12,10 @@ import subprocess
 import tempfile
 import time
 from pathlib import Path
-from typing import Optional
+from typing import Optional, List, Dict, Any
 
-from fastapi import FastAPI, File, HTTPException, UploadFile # type: ignore
-from fastapi.responses import FileResponse  # type: ignore
+from fastapi import FastAPI, File, HTTPException, UploadFile, Form, Query # type: ignore
+from fastapi.responses import FileResponse, StreamingResponse  # type: ignore
 from pydantic import BaseModel  # type: ignore
 
 from markitdown import MarkItDown   # type: ignore
@@ -23,7 +23,15 @@ from .config import config
 from .schemas import (
     ConversionFileResult,
     BatchConversionResult,
-    SupportedFormatsResponse
+    SupportedFormatsResponse,
+    BatchJobResponse,
+    IndexResponse,
+    IndexFileRequest,
+    IndexFolderRequest,
+    RAGRequest,
+    RAGResponse,
+    RetrievalResult,
+    SearchResult
 )
 
 # ============================================================================
@@ -296,16 +304,24 @@ def create_batch_result(
 
 
 @app.post("/convert")
-async def convert_file(file: UploadFile = File(...)) -> FileResponse:
+async def convert_file(
+    file: UploadFile = File(...),
+    auto_index: bool = Form(False)
+) -> Dict[str, Any]:
     """
     업로드된 단일 파일을 마크다운으로 변환합니다.
     
-    변환된 파일은 출력 디렉토리에 저장되고 다운로드로 반환됩니다.
+    Args:
+        file: 변환할 파일
+        auto_index: 변환 후 자동으로 인덱싱할지 여부
+    
+    Returns:
+        변환 결과 및 인덱싱 정보
     """
     if not file.filename:
         raise HTTPException(status_code=400, detail="파일명이 필요합니다")
 
-    logger.info(f"📥 파일 수신됨: {file.filename}")
+    logger.info(f"📥 파일 수신됨: {file.filename} (auto_index={auto_index})")
     
     input_suffix = Path(file.filename).suffix.lower() or ".bin"
 
@@ -327,11 +343,34 @@ async def convert_file(file: UploadFile = File(...)) -> FileResponse:
         if not output_path.exists():
             raise HTTPException(status_code=500, detail="변환된 파일을 찾을 수 없습니다")
         
-        return FileResponse(
-            path=str(output_path),
-            media_type="text/markdown",
-            filename=output_filename
-        )
+        result = {
+            "filename": output_filename,
+            "status": "converted",
+            "output_path": str(output_path.relative_to(config.CONVERSION.OUTPUT_DIR)),
+            "indexed": False,
+            "duration": duration
+        }
+        
+        # auto_index가 True면 즉시 인덱싱
+        if auto_index:
+            try:
+                from .indexer import DocumentIndexer
+                indexer = DocumentIndexer()
+                index_result = indexer.index_file(output_path)
+                
+                result["status"] = "converted_and_indexed"
+                result["indexed"] = True
+                result["index_info"] = {
+                    "document_id": output_path.stem,
+                    "chunks": index_result.get("total_chunks", 0)
+                }
+                logger.info(f"✅ 인덱싱 완료: {output_filename}")
+            except Exception as e:
+                logger.error(f"❌ 인덱싱 실패: {e}")
+                result["index_error"] = str(e)
+        
+        return result
+        
     finally:
         try:
             os.remove(input_path)
@@ -340,13 +379,18 @@ async def convert_file(file: UploadFile = File(...)) -> FileResponse:
 
 
 @app.post("/convert-folder")
-async def convert_folder() -> FileResponse:
+async def convert_folder(auto_index: bool = Form(False)) -> FileResponse:
     """
     입력 디렉토리의 모든 지원 파일을 변환합니다.
+    
+    Args:
+        auto_index: 변환 후 자동으로 인덱싱할지 여부
     
     변환 결과 및 통계가 포함된 JSON 파일을 반환합니다.
     """
     batch_start_time = time.time()
+    
+    logger.info(f"📂 배치 변환 시작 (auto_index={auto_index})")
     
     if not config.CONVERSION.INPUT_DIR.exists():
         raise HTTPException(status_code=400, detail="입력 디렉토리가 존재하지 않습니다")
@@ -376,6 +420,7 @@ async def convert_folder() -> FileResponse:
     # 파일 처리
     converted = []
     failed = []
+    converted_paths = []  # 인덱싱용
 
     for idx, file_path in enumerate(sorted(files_to_convert), 1):
         logger.info(f"\n[{idx}/{len(files_to_convert)}]")
@@ -393,12 +438,51 @@ async def convert_folder() -> FileResponse:
         if success:
             result_dict["output"] = output_filename
             converted.append(result_dict)
+            converted_paths.append(config.CONVERSION.OUTPUT_DIR / output_filename)
         else:
             result_dict["reason"] = msg
             failed.append(result_dict)
 
     total_duration = time.time() - batch_start_time
     all_results = converted + failed
+
+    # auto_index가 True면 변환된 파일들 인덱싱
+    if auto_index and converted_paths:
+        logger.info(f"\n✨ 자동 인덱싱 시작: {len(converted_paths)}개 파일")
+        try:
+            from .indexer import DocumentIndexer
+            import time as time_module
+            
+            indexer = DocumentIndexer()
+            
+            indexed_count = 0
+            failed_index_count = 0
+            
+            for i, md_path in enumerate(converted_paths, 1):
+                try:
+                    logger.info(f"[{i}/{len(converted_paths)}] 인덱싱 중: {md_path.name}")
+                    result = indexer.index_file(md_path, force_reindex=False)
+                    
+                    if result.get("status") == "indexed":
+                        indexed_count += 1
+                        logger.info(f"✅ 인덱싱 완료: {md_path.name} ({result.get('chunks', 0)} 청크)")
+                    elif result.get("status") == "skipped":
+                        indexed_count += 1
+                        logger.debug(f"⏭️  스킵: {md_path.name} (이미 인덱싱됨)")
+                    else:
+                        failed_index_count += 1
+                        logger.warning(f"⚠️  인덱싱 실패: {md_path.name} - {result.get('message', '알 수 없는 에러')}")
+                    
+                    # ChromaDB readonly 에러 방지를 위해 짧은 딜레이
+                    time_module.sleep(0.1)
+                    
+                except Exception as e:
+                    failed_index_count += 1
+                    logger.error(f"❌ 인덱싱 에러 ({md_path.name}): {e}")
+            
+            logger.info(f"\n✅ 인덱싱 완료: {indexed_count}개 성공, {failed_index_count}개 실패")
+        except Exception as e:
+            logger.error(f"인덱싱 초기화 에러: {e}")
 
     # 요약 기록
     log_batch_summary(
@@ -440,3 +524,499 @@ async def get_supported_formats() -> SupportedFormatsResponse:
         formats=sorted(list(config.CONVERSION.SUPPORTED_FORMATS)),
         count=len(config.CONVERSION.SUPPORTED_FORMATS)
     )
+
+
+# ============================================================================
+# 배치 처리 엔드포인트
+# ============================================================================
+
+@app.post("/convert-batch")
+async def convert_batch(
+    files: List[UploadFile] = File(...),
+    batch_size: int = Form(100),
+    auto_index: bool = Form(True)
+) -> BatchJobResponse:
+    """
+    여러 파일을 배치로 나눠서 처리.
+    
+    Args:
+        files: 업로드된 파일 목록
+        batch_size: 배치당 처리할 파일 수
+        auto_index: 변환 후 자동 임베딩 여부
+    
+    Returns:
+        배치 작업 정보 및 상태
+    """
+    from .batch_manager import get_batch_manager
+    from .indexer import DocumentIndexer
+    
+    logger.info(f"📦 배치 작업 시작: {len(files)}개 파일, batch_size={batch_size}, auto_index={auto_index}")
+    
+    # 파일들을 임시 저장
+    temp_files = []
+    for file in files:
+        if not file.filename:
+            continue
+        
+        input_suffix = Path(file.filename).suffix.lower() or ".bin"
+        with tempfile.NamedTemporaryFile(delete=False, suffix=input_suffix, dir="/tmp") as tmp:
+            tmp.write(await file.read())
+            temp_files.append((Path(tmp.name), file.filename))
+    
+    # 배치 작업 생성
+    batch_manager = get_batch_manager()
+    batch_id = batch_manager.create_batch(
+        files=[name for _, name in temp_files],
+        batch_size=batch_size,
+        auto_index=auto_index
+    )
+    
+    # 배치별로 순차 처리
+    state = batch_manager.load_state(batch_id)
+    indexer = DocumentIndexer() if auto_index else None
+    
+    for batch_info in state["batches"]:
+        batch_num = batch_info["batch_num"]
+        
+        # 배치 시작
+        batch_manager.update_batch_status(batch_id, batch_num, "processing")
+        
+        for file_info in batch_info["files"]:
+            filename = file_info["filename"]
+            
+            # 해당 파일의 임시 경로 찾기
+            temp_path = None
+            for tmp_path, orig_name in temp_files:
+                if orig_name == filename:
+                    temp_path = tmp_path
+                    break
+            
+            if not temp_path:
+                batch_manager.update_file_status(
+                    batch_id, batch_num, filename,
+                    status="failed",
+                    error="임시 파일을 찾을 수 없습니다"
+                )
+                continue
+            
+            try:
+                # 변환
+                start_time = time.time()
+                success, output_filename, msg, duration = convert_single_file(
+                    temp_path,
+                    log_progress=False
+                )
+                
+                if not success:
+                    batch_manager.update_file_status(
+                        batch_id, batch_num, filename,
+                        status="failed",
+                        error=msg,
+                        duration=duration
+                    )
+                    continue
+                
+                md_path = config.CONVERSION.OUTPUT_DIR / output_filename
+                
+                # 임베딩 (옵션)
+                indexed = False
+                if auto_index and indexer:
+                    try:
+                        indexer.index_file(md_path)
+                        indexed = True
+                    except Exception as e:
+                        logger.error(f"인덱싱 실패 ({filename}): {e}")
+                
+                # 성공 상태 업데이트
+                batch_manager.update_file_status(
+                    batch_id, batch_num, filename,
+                    status="completed",
+                    converted_path=output_filename,
+                    indexed=indexed,
+                    duration=duration
+                )
+                
+            except Exception as e:
+                # 실패 상태 업데이트
+                batch_manager.update_file_status(
+                    batch_id, batch_num, filename,
+                    status="failed",
+                    error=str(e)
+                )
+        
+        # 배치 완료
+        batch_manager.update_batch_status(batch_id, batch_num, "completed")
+    
+    # 임시 파일 정리
+    for tmp_path, _ in temp_files:
+        try:
+            tmp_path.unlink()
+        except:
+            pass
+    
+    # 최종 상태 반환
+    final_state = batch_manager.load_state(batch_id)
+    return BatchJobResponse(**final_state)
+
+
+@app.get("/batch/{batch_id}")
+async def get_batch_status(batch_id: str) -> BatchJobResponse:
+    """
+    배치 작업 상태 조회.
+    
+    Args:
+        batch_id: 배치 작업 ID
+    
+    Returns:
+        현재 배치 작업 상태
+    """
+    from .batch_manager import get_batch_manager
+    
+    batch_manager = get_batch_manager()
+    
+    if not batch_manager.batch_exists(batch_id):
+        raise HTTPException(404, "배치 작업을 찾을 수 없습니다")
+    
+    state = batch_manager.load_state(batch_id)
+    return BatchJobResponse(**state)
+
+
+@app.delete("/batch/{batch_id}")
+async def delete_batch(batch_id: str) -> Dict[str, str]:
+    """
+    배치 작업 삭제.
+    
+    Args:
+        batch_id: 배치 작업 ID
+    
+    Returns:
+        삭제 확인 메시지
+    """
+    from .batch_manager import get_batch_manager
+    
+    batch_manager = get_batch_manager()
+    
+    if not batch_manager.batch_exists(batch_id):
+        raise HTTPException(404, "배치 작업을 찾을 수 없습니다")
+    
+    batch_manager.delete_batch(batch_id)
+    return {"message": f"배치 {batch_id} 삭제 완료"}
+
+
+@app.post("/batch/folder")
+async def batch_folder(
+    batch_size: int = Query(100, description="배치당 파일 수"),
+    auto_index: bool = Query(True, description="자동 인덱싱 여부")
+) -> BatchJobResponse:
+    """
+    input 폴더의 모든 파일을 배치 처리 (파일 업로드 없이).
+    
+    Args:
+        batch_size: 배치당 처리할 파일 수
+        auto_index: 변환 후 자동 임베딩 여부
+    
+    Returns:
+        배치 작업 정보 및 상태
+    """
+    from .batch_manager import get_batch_manager
+    from .indexer import DocumentIndexer
+    
+    if not config.CONVERSION.INPUT_DIR.exists():
+        raise HTTPException(400, "입력 디렉토리가 존재하지 않습니다")
+    
+    files_to_convert = get_supported_files(config.CONVERSION.INPUT_DIR)
+    
+    if not files_to_convert:
+        raise HTTPException(400, "변환할 파일이 없습니다")
+    
+    logger.info(f"📦 Input 폴더 배치 작업 시작: {len(files_to_convert)}개 파일, batch_size={batch_size}, auto_index={auto_index}")
+    
+    # 배치 작업 생성
+    batch_manager = get_batch_manager()
+    batch_id = batch_manager.create_batch(
+        files=[str(f) for f in files_to_convert],
+        batch_size=batch_size,
+        auto_index=auto_index
+    )
+    
+    # 배치별로 순차 처리
+    state = batch_manager.load_state(batch_id)
+    indexer = DocumentIndexer() if auto_index else None
+    
+    for batch_info in state["batches"]:
+        batch_num = batch_info["batch_num"]
+        
+        # 배치 시작
+        batch_manager.update_batch_status(batch_id, batch_num, "processing")
+        
+        for file_info in batch_info["files"]:
+            filename = file_info["filename"]
+            
+            # 파일 경로 찾기
+            file_path = Path(filename)
+            if not file_path.exists():
+                # 상대 경로인 경우 input 디렉토리 기준으로 찾기
+                file_path = config.CONVERSION.INPUT_DIR / Path(filename).name
+            
+            if not file_path.exists():
+                batch_manager.update_file_status(
+                    batch_id, batch_num, filename,
+                    status="failed",
+                    error="파일을 찾을 수 없습니다"
+                )
+                continue
+            
+            try:
+                # 변환
+                success, output_filename, msg, duration = convert_single_file(
+                    file_path,
+                    log_progress=True
+                )
+                
+                if not success:
+                    batch_manager.update_file_status(
+                        batch_id, batch_num, filename,
+                        status="failed",
+                        error=msg,
+                        duration=duration
+                    )
+                    continue
+                
+                md_path = config.CONVERSION.OUTPUT_DIR / output_filename
+                
+                # 임베딩 (옵션)
+                indexed = False
+                if auto_index and indexer:
+                    try:
+                        indexer.index_file(md_path)
+                        indexed = True
+                    except Exception as e:
+                        logger.error(f"인덱싱 실패 ({filename}): {e}")
+                
+                # 성공 상태 업데이트
+                batch_manager.update_file_status(
+                    batch_id, batch_num, filename,
+                    status="completed",
+                    converted_path=output_filename,
+                    indexed=indexed,
+                    duration=duration
+                )
+                
+            except Exception as e:
+                # 실패 상태 업데이트
+                batch_manager.update_file_status(
+                    batch_id, batch_num, filename,
+                    status="failed",
+                    error=str(e)
+                )
+        
+        # 배치 완료
+        batch_manager.update_batch_status(batch_id, batch_num, "completed")
+    
+    # 최종 상태 반환
+    final_state = batch_manager.load_state(batch_id)
+    return BatchJobResponse(**final_state)
+
+
+@app.get("/batch")
+async def list_batches() -> Dict[str, Any]:
+    """
+    저장된 모든 배치 작업 목록 조회.
+    
+    Returns:
+        배치 ID 목록 및 요약 정보
+    """
+    from .batch_manager import get_batch_manager
+    
+    batch_manager = get_batch_manager()
+    batch_ids = batch_manager.list_batches()
+    
+    batches_summary = []
+    for batch_id in batch_ids:
+        try:
+            state = batch_manager.load_state(batch_id)
+            batches_summary.append({
+                "batch_id": batch_id,
+                "status": state.get("status"),
+                "total_files": state.get("total_files"),
+                "progress_percentage": state.get("progress_percentage"),
+                "started_at": state.get("started_at")
+            })
+        except Exception as e:
+            logger.error(f"배치 {batch_id} 로드 실패: {e}")
+    
+    return {
+        "total_batches": len(batches_summary),
+        "batches": batches_summary
+    }
+
+
+# ============================================================================
+# 인덱싱 엔드포인트
+# ============================================================================
+
+@app.post("/index")
+async def index_document(request: IndexFileRequest) -> Dict[str, Any]:
+    """
+    단일 마크다운 파일 인덱싱.
+    
+    Args:
+        request: 인덱싱 요청 (file_path, force)
+    
+    Returns:
+        인덱싱 결과
+    """
+    from .indexer import DocumentIndexer
+    
+    indexer = DocumentIndexer()
+    full_path = config.CONVERSION.OUTPUT_DIR / request.file_path
+    
+    if not full_path.exists():
+        raise HTTPException(404, f"파일을 찾을 수 없습니다: {request.file_path}")
+    
+    try:
+        result = indexer.index_file(full_path, force_reindex=request.force)
+        return {
+            "status": "success",
+            "message": f"인덱싱 완료: {request.file_path}",
+            "result": result
+        }
+    except Exception as e:
+        logger.error(f"인덱싱 실패: {e}")
+        raise HTTPException(500, f"인덱싱 실패: {str(e)}")
+
+
+@app.post("/index-folder")
+async def index_folder(request: IndexFolderRequest) -> IndexResponse:
+    """
+    output 폴더의 모든 MD 파일 인덱싱.
+    
+    Args:
+        request: 폴더 인덱싱 요청 (folder, force)
+    
+    Returns:
+        인덱싱 결과
+    """
+    from .indexer import DocumentIndexer
+    
+    indexer = DocumentIndexer()
+    target_dir = config.CONVERSION.OUTPUT_DIR / request.folder
+    
+    if not target_dir.exists():
+        raise HTTPException(404, f"폴더를 찾을 수 없습니다: {request.folder}")
+    
+    try:
+        result = indexer.index_directory(target_dir, force_reindex=request.force)
+        return IndexResponse(**result.model_dump()) if hasattr(result, 'model_dump') else IndexResponse(**result)
+    except Exception as e:
+        logger.error(f"폴더 인덱싱 실패: {e}")
+        raise HTTPException(500, f"폴더 인덱싱 실패: {str(e)}")
+
+
+@app.get("/documents")
+async def list_documents() -> Dict[str, Any]:
+    """
+    인덱싱된 문서 목록 조회.
+    
+    Returns:
+        문서 목록 및 통계
+    """
+    from .indexer import DocumentIndexer
+    
+    try:
+        indexer = DocumentIndexer()
+        docs = indexer.get_indexed_files()
+        
+        return {
+            "total": len(docs),
+            "documents": [d.model_dump() for d in docs]
+        }
+    except Exception as e:
+        logger.error(f"문서 목록 조회 실패: {e}")
+        raise HTTPException(500, f"문서 목록 조회 실패: {str(e)}")
+
+
+# ============================================================================
+# RAG 엔드포인트
+# ============================================================================
+
+@app.post("/query")
+async def query(request: RAGRequest) -> RAGResponse:
+    """
+    RAG 질의응답.
+    
+    Args:
+        request: 질의 요청 (query, top_k 등)
+    
+    Returns:
+        답변 및 출처
+    """
+    from .rag import RAGPipeline
+    
+    try:
+        rag = RAGPipeline()
+        rag_result = rag.query(
+            question=request.query,
+            top_k=request.top_k,
+            include_sources=request.include_sources
+        )
+        
+        # RAGResult를 RAGResponse로 변환
+        response = RAGResponse(
+            answer=rag_result.answer,
+            sources=[
+                RetrievalResult(
+                    content=src.get("content", ""),
+                    source=src.get("source", ""),
+                    chunk_id=src.get("chunk_id", 0),
+                    similarity_score=src.get("score", 0.0)
+                )
+                for src in rag_result.sources
+            ],
+            model=config.OLLAMA.LLM_MODEL,
+            tokens_used=None
+        )
+        
+        return response
+    except Exception as e:
+        logger.error(f"RAG 질의 실패: {e}")
+        raise HTTPException(500, f"RAG 질의 실패: {str(e)}")
+
+
+@app.get("/search")
+async def search_documents(
+    query: str = Query(..., description="검색 쿼리"),
+    top_k: int = Query(5, description="반환할 문서 수")
+) -> Dict[str, Any]:
+    """
+    문서 검색만 (답변 생성 없음).
+    
+    Args:
+        query: 검색 쿼리
+        top_k: 반환할 문서 수
+    
+    Returns:
+        검색된 문서 목록
+    """
+    from .retriever import get_retriever
+    
+    try:
+        retriever = get_retriever()
+        results = retriever.search(query, k=top_k)
+        
+        return {
+            "query": query,
+            "total_results": len(results),
+            "results": [
+                {
+                    "id": r.id,
+                    "content": r.content,
+                    "score": r.score,
+                    "metadata": r.metadata
+                }
+                for r in results
+            ]
+        }
+    except Exception as e:
+        logger.error(f"문서 검색 실패: {e}")
+        raise HTTPException(500, f"문서 검색 실패: {str(e)}")

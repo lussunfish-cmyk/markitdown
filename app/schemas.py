@@ -176,3 +176,70 @@ class SupportedFormatsResponse(BaseModel):
     """지원 파일 형식 응답."""
     formats: List[str] = Field(..., description="지원 파일 형식 목록")
     count: int = Field(..., description="지원 형식 개수")
+
+
+# ============================================================================
+# 배치 처리 스키마
+# ============================================================================
+
+class BatchFileStatus(BaseModel):
+    """배치 내 개별 파일 처리 상태."""
+    filename: str = Field(..., description="파일명")
+    status: str = Field(..., description="처리 상태: pending, processing, completed, failed")
+    error: Optional[str] = Field(None, description="에러 메시지 (실패 시)")
+    converted_path: Optional[str] = Field(None, description="변환된 MD 파일 경로")
+    indexed: bool = Field(False, description="인덱싱 완료 여부")
+    duration: Optional[float] = Field(None, description="처리 시간 (초)")
+
+
+class BatchInfo(BaseModel):
+    """배치 그룹 정보."""
+    batch_num: int = Field(..., description="배치 번호")
+    total_files: int = Field(..., description="배치 내 총 파일 수")
+    completed: int = Field(0, description="완료된 파일 수")
+    failed: int = Field(0, description="실패한 파일 수")
+    status: str = Field(..., description="배치 상태: pending, processing, completed, failed")
+    files: List[BatchFileStatus] = Field(default_factory=list, description="파일 목록")
+
+
+class BatchJobResponse(BaseModel):
+    """배치 작업 전체 응답."""
+    batch_id: str = Field(..., description="배치 작업 ID")
+    total_files: int = Field(..., description="전체 파일 수")
+    total_batches: int = Field(..., description="총 배치 수")
+    batch_size: int = Field(..., description="배치당 파일 수")
+    status: str = Field(..., description="전체 작업 상태: pending, processing, completed, failed")
+    batches: List[BatchInfo] = Field(default_factory=list, description="배치 목록")
+    started_at: Optional[str] = Field(None, description="시작 시각")
+    completed_at: Optional[str] = Field(None, description="완료 시각")
+    progress_percentage: float = Field(0.0, description="진행률 (%)")
+    auto_index: bool = Field(False, description="자동 인덱싱 여부")
+
+
+class IndexFileRequest(BaseModel):
+    """단일 파일 인덱싱 요청."""
+    file_path: str = Field(..., description="인덱싱할 파일 경로 (output 폴더 기준 상대 경로)")
+    force: bool = Field(False, description="이미 인덱싱되어 있어도 재인덱싱")
+
+
+class IndexFolderRequest(BaseModel):
+    """폴더 인덱싱 요청."""
+    folder: str = Field("", description="서브폴더 경로 (빈 문자열이면 output 전체)")
+    force: bool = Field(False, description="이미 인덱싱된 파일도 재인덱싱")
+
+
+class SearchResult(BaseModel):
+    """검색 결과."""
+    id: str = Field(..., description="문서 청크 ID")
+    content: str = Field(..., description="문서 내용")
+    score: float = Field(..., description="유사도 점수")
+    metadata: dict = Field(default_factory=dict, description="메타데이터")
+
+
+class QueryStreamChunk(BaseModel):
+    """스트리밍 응답 청크."""
+    type: str = Field(..., description="청크 타입: search_complete, token, complete")
+    content: Optional[str] = Field(None, description="토큰 내용")
+    sources: Optional[List[RetrievalResult]] = Field(None, description="검색된 출처")
+    metrics: Optional[dict] = Field(None, description="성능 메트릭")
+

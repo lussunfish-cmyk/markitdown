@@ -42,11 +42,11 @@ class VectorStoreConfig:
 class ChunkingConfig:
     """텍스트 분할 설정."""
     
-    # 청크 크기 (문자 단위)
-    CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "1024"))
+    # 청크 크기 (문자 단위) - mxbai-embed-large 토큰 제한 고려
+    CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "512"))
     
     # 청크 간 겹침 (문자 단위)
-    CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "256"))
+    CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "128"))
     
     # 분할 구분자
     SEPARATORS = ["\n\n", "\n", ".", " ", ""]
@@ -108,6 +108,20 @@ class IndexingConfig:
     WATCH_INTERVAL = int(os.getenv("WATCH_INTERVAL", "10"))
 
 
+class BatchConfig:
+    """배치 처리 설정."""
+    
+    # 배치 상태 저장 경로
+    BATCH_STATE_DIR = Path(os.getenv("BATCH_STATE_DIR", "/app/batch_state"))
+    BATCH_STATE_DIR.mkdir(parents=True, exist_ok=True)
+    
+    # 기본 배치 크기
+    DEFAULT_BATCH_SIZE = int(os.getenv("DEFAULT_BATCH_SIZE", "100"))
+    
+    # 배치 처리 타임아웃 (초, 0이면 무제한)
+    BATCH_TIMEOUT = int(os.getenv("BATCH_TIMEOUT", "0"))
+
+
 class AppConfig:
     """애플리케이션 설정."""
     
@@ -125,6 +139,7 @@ class AppConfig:
     RAG = RAGConfig()
     CONVERSION = ConversionConfig()
     INDEXING = IndexingConfig()
+    BATCH = BatchConfig()
 
 
 # 전역 설정 인스턴스

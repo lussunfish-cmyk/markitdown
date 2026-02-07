@@ -8,7 +8,17 @@ services:
     volumes:
       - ./output:/app/output
       - ./input:/app/input
+      - ./app:/app/app
     environment:
       - MARKITDOWN_OUTPUT_DIR=/app/output
       - MARKITDOWN_INPUT_DIR=/app/input
+      - OLLAMA_BASE_URL=http://host.docker.internal:11434
+      - OLLAMA_EMBEDDING_MODEL=nomic-embed-text
+      - OLLAMA_LLM_MODEL=gemma2
+      - VECTOR_STORE_DIR=/app/vector_store
+      - LOG_LEVEL=INFO
     restart: unless-stopped
+    networks:
+      - default
+    extra_hosts:
+      - "host.docker.internal:host-gateway"

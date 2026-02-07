@@ -8,8 +8,8 @@ from abc import ABC, abstractmethod
 from typing import List, Optional, Dict, Any
 from pathlib import Path
 
-import chromadb
-from chromadb.config import Settings
+import chromadb # type: ignore
+from chromadb.config import Settings    # type: ignore
 
 from .config import config
 from .schemas import DocumentChunk

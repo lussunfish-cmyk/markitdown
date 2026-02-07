@@ -3,7 +3,7 @@ RAG API 요청/응답을 위한 Pydantic 스키마.
 """
 
 from typing import Optional, List
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field   # type: ignore
 
 
 # ============================================================================

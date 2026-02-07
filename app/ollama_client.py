@@ -5,7 +5,7 @@
 import logging
 from typing import Optional, List
 
-import ollama
+import ollama   # type: ignore
 
 from .config import config
 

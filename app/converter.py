@@ -14,11 +14,11 @@ import time
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
-from fastapi.responses import FileResponse
-from pydantic import BaseModel
+from fastapi import FastAPI, File, HTTPException, UploadFile # type: ignore
+from fastapi.responses import FileResponse  # type: ignore
+from pydantic import BaseModel  # type: ignore
 
-from markitdown import MarkItDown
+from markitdown import MarkItDown   # type: ignore
 from .config import config
 from .schemas import (
     ConversionFileResult,

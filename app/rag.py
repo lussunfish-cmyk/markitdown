@@ -41,16 +41,21 @@ _search_cache_misses = 0
 # ============================================================================
 
 # 간결하고 효과적인 시스템 프롬프트
-DEFAULT_SYSTEM_PROMPT = """기술 문서 전문가로서 주어진 컨텍스트만을 사용하여 정확하게 답변하세요.
-컨텍스트에 없는 정보는 "문서에 관련 정보가 없습니다"라고 답하세요."""
+DEFAULT_SYSTEM_PROMPT = """You are a helpful technical documentation assistant. Your task is to answer questions based ONLY on the provided context.
+
+IMPORTANT:
+- Always use information from the context to answer the question
+- If the context contains relevant information, use it to provide a helpful answer
+- Only say "No relevant information found" if the context is truly empty or completely unrelated
+- Answer in the same language as the question (Korean questions → Korean answers, English questions → English answers)"""
 
 # 출처 표시를 강화한 사용자 프롬프트
-DEFAULT_USER_PROMPT_TEMPLATE = """컨텍스트:
+DEFAULT_USER_PROMPT_TEMPLATE = """Context from technical documents:
 {context}
 
-질문: {question}
+Question: {question}
 
-답변:"""
+Answer (use the context above):"""
 
 
 # ============================================================================
@@ -238,8 +243,17 @@ class RAGPipeline:
             
             logger.info(f"검색 완료: {len(search_results)}개 청크 발견")
             
+            # 디버깅: 검색 결과 미리보기 (최대 15개)
+            for i, result in enumerate(search_results[:15], 1):
+                preview = result.content[:100].replace('\n', ' ')
+                logger.info(f"  청크 {i}: score={result.score:.4f}, content={preview}...")
+            
             # 2. 컨텍스트 구성
             context = self._build_context(search_results)
+            
+            # 디버깅: 컨텍스트 미리보기
+            context_preview = context[:300].replace('\n', ' ')
+            logger.info(f"컨텍스트 생성됨 (길이: {len(context)}): {context_preview}...")
             
             if metrics:
                 metrics.num_chunks = len(search_results)
@@ -398,9 +412,11 @@ class RAGPipeline:
                     )
                 ]
             
-            # 유사도 임계값 필터링
-            threshold = config.RAG.SIMILARITY_THRESHOLD
-            results = [r for r in results if r.score >= threshold]
+            # 유사도 임계값 필터링은 제거 - 이미 retriever에서 top-k로 제한됨
+            # ChromaDB의 거리 기반 점수는 정규화가 일관적이지 않으므로
+            # 하드 threshold 대신 상위 k개 결과만 사용
+            
+            logger.info(f"검색 결과: {len(results)}개")
             
             # 캐시에 저장
             if self.enable_cache:
@@ -504,11 +520,19 @@ class RAGPipeline:
             생성된 답변
         """
         try:
+            # 디버깅: 프롬프트 미리보기
+            prompt_preview = prompt[:500].replace('\n', ' ')
+            logger.info(f"LLM 프롬프트 전송 중 (길이: {len(prompt)}): {prompt_preview}...")
+            
             answer = self.ollama_client.generate(
                 prompt=prompt,
                 temperature=self.temperature,
                 num_predict=self.max_tokens
             )
+            
+            # 디버깅: 답변 미리보기
+            answer_preview = answer[:200].replace('\n', ' ')
+            logger.info(f"LLM 답변 수신됨 (길이: {len(answer)}): {answer_preview}...")
             
             return answer.strip()
         
@@ -532,6 +556,7 @@ class RAGPipeline:
             source_info = {
                 "rank": i,
                 "score": round(result.score, 4),
+                "content": result.content,
                 "content_preview": result.content[:200] + "..." if len(result.content) > 200 else result.content
             }
             
@@ -544,6 +569,10 @@ class RAGPipeline:
                 })
             
             sources.append(source_info)
+        
+        # 디버깅: 첫 번째 출처 확인
+        if sources:
+            logger.info(f"_extract_sources - 첫 출처 content 길이: {len(sources[0].get('content', ''))}")
         
         return sources
     
@@ -656,4 +685,4 @@ def create_rag_pipeline(
     Returns:
         새로운 RAG 파이프라인 인스턴스
     """
-    return RAGPipeline(retriever_type=retriever_type, **kwargs)
+    return RAGPipelin

@@ -15,7 +15,8 @@ from pathlib import Path
 from typing import Optional, List, Dict, Any
 
 from fastapi import FastAPI, File, HTTPException, UploadFile, Form, Query # type: ignore
-from fastapi.responses import FileResponse, StreamingResponse  # type: ignore
+from fastapi.responses import FileResponse, StreamingResponse, HTMLResponse  # type: ignore
+from fastapi.staticfiles import StaticFiles  # type: ignore
 from pydantic import BaseModel  # type: ignore
 
 from markitdown import MarkItDown   # type: ignore
@@ -50,6 +51,11 @@ def setup_logging() -> logging.Logger:
 
 logger = setup_logging()
 app = FastAPI(title=config.API_TITLE)
+
+# Static files 마운트 (프론트엔드)
+static_path = Path(__file__).parent / "static"
+if static_path.exists():
+    app.mount("/static", StaticFiles(directory=str(static_path)), name="static")
 
 # ============================================================================
 # 보조 함수
@@ -509,6 +515,15 @@ async def convert_folder(auto_index: bool = Form(False)) -> FileResponse:
         media_type="application/json",
         filename=config.CONVERSION.RESULT_FILENAME
     )
+
+
+@app.get("/", response_class=HTMLResponse)
+async def root():
+    """프론트엔드 UI를 제공합니다."""
+    static_path = Path(__file__).parent / "static" / "index.html"
+    if static_path.exists():
+        return HTMLResponse(content=static_path.read_text(), status_code=200)
+    return HTMLResponse(content="<h1>MarkItDown API</h1><p>Frontend not found</p>", status_code=200)
 
 
 @app.get("/health")
@@ -976,6 +991,10 @@ async def query(request: RAGRequest) -> RAGResponse:
             model=config.OLLAMA.LLM_MODEL,
             tokens_used=None
         )
+        
+        # 디버깅: 첫 번째 출처 내용 확인
+        if response.sources:
+            logger.info(f"첫 번째 출처 - content 길이: {len(response.sources[0].content)}, source: {response.sources[0].source}")
         
         return response
     except Exception as e:

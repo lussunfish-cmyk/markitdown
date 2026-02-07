@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MarkItDown RAG Assistant</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>📚 MarkItDown RAG Assistant</h1>
+            <p>파일을 업로드하고 질문하세요</p>
+        </header>
+
+        <!-- 파일 업로드 섹션 -->
+        <section class="upload-section">
+            <h2>1. 파일 업로드 & 인덱싱</h2>
+            <div class="upload-area">
+                <input type="file" id="fileInput" multiple accept=".pdf,.docx,.doc,.pptx,.xlsx,.txt,.md,.html">
+                <label for="fileInput" class="file-label">
+                    <span class="file-icon">📁</span>
+                    <span>파일 선택 (여러 개 선택 가능)</span>
+                </label>
+                <button id="uploadBtn" class="btn btn-primary" disabled>업로드 & 인덱싱</button>
+            </div>
+            
+            <!-- 선택된 파일 목록 -->
+            <div id="fileList" class="file-list"></div>
+            
+            <!-- 업로드 진행 상태 -->
+            <div id="uploadProgress" class="upload-progress hidden"></div>
+        </section>
+
+        <!-- 인덱싱된 문서 목록 -->
+        <section class="documents-section">
+            <h2>2. 인덱싱된 문서</h2>
+            <button id="refreshDocsBtn" class="btn btn-secondary">새로고침</button>
+            <div id="documentsList" class="documents-list">
+                <p class="placeholder">아직 인덱싱된 문서가 없습니다.</p>
+            </div>
+        </section>
+
+        <!-- RAG 질의 섹션 -->
+        <section class="query-section">
+            <h2>3. 질문하기</h2>
+            <div class="query-area">
+                <input type="text" id="queryInput" placeholder="질문을 입력하세요..." class="query-input">
+                <button id="queryBtn" class="btn btn-primary">전송</button>
+            </div>
+            
+            <!-- 검색 옵션 -->
+            <div class="query-options">
+                <label>
+                    <input type="number" id="topK" value="3" min="1" max="10">
+                    개의 문서 참조
+                </label>
+                <label>
+                    <input type="checkbox" id="includeSources" checked>
+                    출처 표시
+                </label>
+            </div>
+            
+            <!-- 로딩 인디케이터 -->
+            <div id="queryLoading" class="loading hidden">
+                <div class="spinner"></div>
+                <p>답변 생성 중...</p>
+            </div>
+            
+            <!-- 답변 영역 -->
+            <div id="answerArea" class="answer-area hidden">
+                <h3>답변</h3>
+                <div id="answerContent" class="answer-content"></div>
+                
+                <!-- 출처 영역 -->
+                <div id="sourcesArea" class="sources-area hidden">
+                    <h4>📎 출처</h4>
+                    <div id="sourcesList" class="sources-list"></div>
+                </div>
+            </div>
+        </section>
+
+        <!-- 히스토리 -->
+        <section class="history-section">
+            <div class="history-header">
+                <h2>💬 대화 히스토리</h2>
+                <button id="clearHistoryBtn" class="btn btn-small">지우기</button>
+            </div>
+            <div id="historyList" class="history-list"></div>
+        </section>
+    </div>
+
+    <!-- 토스트 알림 -->
+    <div id="toast" class="toast hidden"></div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>

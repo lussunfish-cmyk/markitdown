@@ -65,7 +65,7 @@ class RAGConfig:
     MAX_TOKENS = int(os.getenv("RAG_MAX_TOKENS", "512"))
     
     # 컨텍스트 설정
-    MAX_CONTEXT_LENGTH = int(os.getenv("RAG_MAX_CONTEXT_LENGTH", "4096"))
+    MAX_CONTEXT_LENGTH = int(os.getenv("RAG_MAX_CONTEXT_LENGTH", "8192"))
 
 
 class ConversionConfig:

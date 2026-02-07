@@ -30,8 +30,11 @@ logger = logging.getLogger(__name__)
 # 캐시 설정
 # ============================================================================
 
-# 검색 결과 캐시 (최대 100개, 5분 TTL)
-_search_cache = TTLCache(maxsize=100, ttl=300)
+# 검색 결과 캐시 (설정에서 가져옴)
+_search_cache = TTLCache(
+    maxsize=config.CACHE.SEARCH_CACHE_MAXSIZE,
+    ttl=config.CACHE.SEARCH_CACHE_TTL
+)
 _search_cache_hits = 0
 _search_cache_misses = 0
 

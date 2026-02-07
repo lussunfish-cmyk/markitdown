@@ -239,7 +239,7 @@ class HybridRetriever(BaseRetriever):
     def __init__(
         self,
         vector_store: Optional[VectorStore] = None,
-        alpha: float = 0.7,
+        alpha: Optional[float] = None,
         fusion_method: str = "weighted"
     ):
         """
@@ -247,18 +247,18 @@ class HybridRetriever(BaseRetriever):
         
         Args:
             vector_store: 벡터 저장소
-            alpha: 벡터 검색 가중치 (0~1, 1-alpha는 BM25 가중치)
+            alpha: 벡터 검색 가중치 (0~1, 1-alpha는 BM25 가중치, None이면 config 사용)
             fusion_method: 결합 방식 ("weighted" 또는 "rrf")
         """
         self.vector_retriever = VectorRetriever(vector_store)
         self.bm25_retriever = BM25Retriever(vector_store)
-        self.alpha = alpha
+        self.alpha = alpha if alpha is not None else config.RETRIEVER.HYBRID_ALPHA
         self.fusion_method = fusion_method
         
         if fusion_method not in ["weighted", "rrf"]:
             raise ValueError(f"지원하지 않는 fusion_method: {fusion_method}")
         
-        logger.info(f"✓ HybridRetriever 초기화됨 (alpha={alpha}, method={fusion_method})")
+        logger.info(f"✓ HybridRetriever 초기화됨 (alpha={self.alpha}, method={fusion_method})")
     
     def search(self, query: str, k: int = 5) -> List[SearchResult]:
         """
@@ -358,7 +358,7 @@ class HybridRetriever(BaseRetriever):
         self,
         vector_results: List[SearchResult],
         bm25_results: List[SearchResult],
-        k: int = 60
+        k: Optional[int] = None
     ) -> List[SearchResult]:
         """
         Reciprocal Rank Fusion (RRF) 방식으로 결과를 결합합니다.
@@ -366,11 +366,14 @@ class HybridRetriever(BaseRetriever):
         Args:
             vector_results: 벡터 검색 결과
             bm25_results: BM25 검색 결과
-            k: RRF 파라미터 (일반적으로 60)
+            k: RRF 파라미터 (None이면 config 사용)
             
         Returns:
             결합된 검색 결과
         """
+        if k is None:
+            k = config.RETRIEVER.RRF_K
+        
         # 문서별 RRF 점수 계산
         rrf_scores: Dict[str, float] = defaultdict(float)
         doc_info: Dict[str, Tuple[str, Dict[str, Any]]] = {}
@@ -507,7 +510,7 @@ class AdvancedRetriever(BaseRetriever):
     def __init__(
         self,
         vector_store: Optional[VectorStore] = None,
-        alpha: float = 0.7,
+        alpha: Optional[float] = None,
         fusion_method: str = "weighted",
         rerank_method: str = "bm25",
         use_rerank: bool = True
@@ -517,7 +520,7 @@ class AdvancedRetriever(BaseRetriever):
         
         Args:
             vector_store: 벡터 저장소
-            alpha: 하이브리드 검색 가중치
+            alpha: 하이브리드 검색 가중치 (None이면 config 사용)
             fusion_method: 결합 방식 ("weighted" 또는 "rrf")
             rerank_method: 리랭킹 방법
             use_rerank: 리랭킹 사용 여부
@@ -593,14 +596,14 @@ def create_retriever(
     elif retriever_type == "hybrid":
         return HybridRetriever(
             vector_store=vector_store,
-            alpha=kwargs.get("alpha", 0.7),
+            alpha=kwargs.get("alpha", None),  # None이면 config 사용
             fusion_method=kwargs.get("fusion_method", "weighted")
         )
     
     elif retriever_type == "advanced":
         return AdvancedRetriever(
             vector_store=vector_store,
-            alpha=kwargs.get("alpha", 0.7),
+            alpha=kwargs.get("alpha", None),  # None이면 config 사용
             fusion_method=kwargs.get("fusion_method", "weighted"),
             rerank_method=kwargs.get("rerank_method", "bm25"),
             use_rerank=kwargs.get("use_rerank", True)

@@ -49,7 +49,8 @@ class BatchStateManager:
         """
         # 배치 ID 생성
         timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-        hash_suffix = hashlib.md5(str(files).encode()).hexdigest()[:6]
+        hash_suffix_length = config.BATCH.HASH_SUFFIX_LENGTH
+        hash_suffix = hashlib.md5(str(files).encode()).hexdigest()[:hash_suffix_length]
         batch_id = f"batch-{timestamp}-{hash_suffix}"
         
         # 배치 분할

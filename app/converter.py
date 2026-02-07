@@ -43,14 +43,19 @@ from .schemas import (
 def setup_logging() -> logging.Logger:
     """애플리케이션 로깅을 설정합니다."""
     logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(levelname)s - %(message)s'
+        level=getattr(logging, config.LOGGING.LEVEL),
+        format=config.LOGGING.FORMAT,
+        datefmt=config.LOGGING.DATE_FORMAT
     )
     return logging.getLogger(__name__)
 
 
 logger = setup_logging()
-app = FastAPI(title=config.API_TITLE)
+app = FastAPI(
+    title=config.API.TITLE,
+    version=config.API.VERSION,
+    description=config.API.DESCRIPTION
+)
 
 # Static files 마운트 (프론트엔드)
 static_path = Path(__file__).parent / "static"

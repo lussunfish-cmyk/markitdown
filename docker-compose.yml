@@ -8,6 +8,7 @@ services:
     volumes:
       - ./output:/app/output
       - ./input:/app/input
+      - ./debug:/app/debug
       - ./app:/app/app
     environment:
       - MARKITDOWN_OUTPUT_DIR=/app/output
@@ -17,8 +18,17 @@ services:
       - OLLAMA_LLM_MODEL=gemma2
       - VECTOR_STORE_DIR=/app/vector_store
       - LOG_LEVEL=INFO
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
     restart: unless-stopped
     networks:
       - default
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

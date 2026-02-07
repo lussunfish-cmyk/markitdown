@@ -8,7 +8,7 @@ from typing import List, Dict, Any, Optional, Tuple
 from abc import ABC, abstractmethod
 from collections import defaultdict
 
-import numpy as np
+import numpy as np # type: ignore
 from rank_bm25 import BM25Okapi  # type: ignore
 
 from .config import config

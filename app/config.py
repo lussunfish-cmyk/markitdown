@@ -13,7 +13,7 @@ class OllamaConfig:
     BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
     
     # 모델 설정
-    EMBEDDING_MODEL = os.getenv("OLLAMA_EMBEDDING_MODEL", "nomic-embed-text")
+    EMBEDDING_MODEL = os.getenv("OLLAMA_EMBEDDING_MODEL", "qllama/multilingual-e5-large-instruct")
     LLM_MODEL = os.getenv("OLLAMA_LLM_MODEL", "gemma2")
     
     # 타임아웃 및 재시도 설정
@@ -35,8 +35,8 @@ class VectorStoreConfig:
     # Chroma 특정 설정
     CHROMA_COLLECTION_NAME = os.getenv("CHROMA_COLLECTION_NAME", "documents")
     
-    # 벡터 차원 (nomic-embed-text 기준)
-    EMBEDDING_DIM = int(os.getenv("EMBEDDING_DIM", "768"))
+    # 벡터 차원 (multilingual-e5-large 기준)
+    EMBEDDING_DIM = int(os.getenv("EMBEDDING_DIM", "1024"))
 
 
 class ChunkingConfig:

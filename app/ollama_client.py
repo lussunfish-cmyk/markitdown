@@ -3,12 +3,9 @@
 """
 
 import logging
-import time
 from typing import Optional, List
 
-import requests
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
+import ollama
 
 from .config import config
 
@@ -27,118 +24,20 @@ class OllamaClient:
         self.max_retries = config.OLLAMA.MAX_RETRIES
         self.retry_delay = config.OLLAMA.RETRY_DELAY
         
-        # 재시도 전략이 있는 세션 생성
-        self.session = self._create_session()
+        # Ollama 클라이언트 설정
+        self.client = ollama.Client(host=self.base_url)
         
         # 연결 확인
         self._verify_connection()
     
-    def _create_session(self) -> requests.Session:
-        """재시도 전략이 있는 요청 세션을 생성합니다."""
-        session = requests.Session()
-        
-        # 재시도 전략 설정
-        retry_strategy = Retry(
-            total=self.max_retries,
-            backoff_factor=1,
-            status_forcelist=[429, 500, 502, 503, 504],
-            allowed_methods=["GET", "POST"]
-        )
-        
-        adapter = HTTPAdapter(max_retries=retry_strategy)
-        session.mount("http://", adapter)
-        session.mount("https://", adapter)
-        
-        return session
-    
     def _verify_connection(self) -> None:
         """Ollama 서버 연결을 확인합니다."""
         try:
-            response = self.session.get(
-                f"{self.base_url}/api/tags",
-                timeout=10
-            )
-            response.raise_for_status()
+            self.client.list()
             logger.info(f"✓ Ollama 서버 연결됨: {self.base_url}")
-        except requests.ConnectionError:
-            logger.error(f"✗ {self.base_url}의 Ollama 서버에 연결할 수 없습니다")
-            raise RuntimeError(f"Ollama 서버가 {self.base_url}에서 사용 불가능합니다")
         except Exception as e:
             logger.error(f"✗ Ollama 연결 에러: {str(e)}")
             raise RuntimeError(f"Ollama 서버 연결 실패: {str(e)}")
-    
-    def _call_with_retry(
-        self,
-        endpoint: str,
-        payload: dict,
-        timeout: Optional[int] = None
-    ) -> dict:
-        """
-        재시도 로직을 포함한 Ollama API 호출.
-        
-        Args:
-            endpoint: API 엔드포인트 (기본 URL 제외)
-            payload: 요청 페이로드
-            timeout: 요청 타임아웃 (초)
-            
-        Returns:
-            API 응답 딕셔너리
-            
-        Raises:
-            RuntimeError: 모든 재시도 후 요청이 실패한 경우
-        """
-        timeout = timeout or self.timeout
-        url = f"{self.base_url}/api/{endpoint}"
-        
-        last_error = None
-        for attempt in range(self.max_retries):
-            try:
-                response = self.session.post(
-                    url,
-                    json=payload,
-                    timeout=timeout,
-                    stream=False
-                )
-                response.raise_for_status()
-                return response.json()
-            
-            except requests.Timeout:
-                last_error = f"요청 타임아웃 ({timeout}초)"
-                if attempt < self.max_retries - 1:
-                    logger.warning(
-                        f"{endpoint}에서 타임아웃, {self.retry_delay}초 후 재시도... "
-                        f"(시도 {attempt + 1}/{self.max_retries})"
-                    )
-                    time.sleep(self.retry_delay)
-            
-            except requests.ConnectionError as e:
-                last_error = f"연결 에러: {str(e)}"
-                if attempt < self.max_retries - 1:
-                    logger.warning(
-                        f"{endpoint}에서 연결 에러, {self.retry_delay}초 후 재시도... "
-                        f"(시도 {attempt + 1}/{self.max_retries})"
-                    )
-                    time.sleep(self.retry_delay)
-            
-            except requests.HTTPError as e:
-                # HTTP 에러는 재시도하지 않음
-                raise RuntimeError(
-                    f"Ollama HTTP 에러 {e.response.status_code}: {e.response.text}"
-                )
-            
-            except Exception as e:
-                last_error = str(e)
-                if attempt < self.max_retries - 1:
-                    logger.warning(
-                        f"Error on {endpoint}, retrying in {self.retry_delay}s... "
-                        f"(attempt {attempt + 1}/{self.max_retries}): {str(e)}"
-                    )
-                    time.sleep(self.retry_delay)
-        
-        raise RuntimeError(
-            f"Failed to call {endpoint} after {self.max_retries} attempts. "
-            f"Last error: {last_error}"
-        )
     
     def embed(self, text: str) -> List[float]:
         """
@@ -157,17 +56,16 @@ class OllamaClient:
             raise ValueError("텍스트는 비어있을 수 없습니다")
         
         try:
-            payload = {
-                "model": self.embedding_model,
-                "prompt": text
-            }
+            response = self.client.embed(
+                model=self.embedding_model,
+                input=text
+            )
             
-            response = self._call_with_retry("embed", payload)
-            
-            if "embedding" not in response:
+            # embeddings는 리스트의 리스트이므로 첫 번째 요소를 반환
+            if not response.get('embeddings') or len(response['embeddings']) == 0:
                 raise RuntimeError("Ollama 응답에 임베딩이 없습니다")
             
-            embedding = response["embedding"]
+            embedding = response['embeddings'][0]
             
             if not isinstance(embedding, list):
                 raise RuntimeError(f"잘못된 임베딩 형식: {type(embedding)}")
@@ -233,29 +131,28 @@ class OllamaClient:
             raise ValueError("프롬프트는 비어있을 수 없습니다")
         
         try:
-            payload = {
-                "model": self.llm_model,
-                "prompt": prompt,
-                "stream": False
-            }
+            options = {}
             
-            # 선택적 파라미터 추가
             if temperature is not None:
-                payload["temperature"] = temperature
+                options["temperature"] = temperature
             else:
-                payload["temperature"] = config.RAG.TEMPERATURE
+                options["temperature"] = config.RAG.TEMPERATURE
             
             if top_p is not None:
-                payload["top_p"] = top_p
+                options["top_p"] = top_p
             else:
-                payload["top_p"] = config.RAG.TOP_P
+                options["top_p"] = config.RAG.TOP_P
             
             if num_predict is not None:
-                payload["num_predict"] = num_predict
+                options["num_predict"] = num_predict
             else:
-                payload["num_predict"] = config.RAG.MAX_TOKENS
+                options["num_predict"] = config.RAG.MAX_TOKENS
             
-            response = self._call_with_retry("generate", payload)
+            response = self.client.generate(
+                model=self.llm_model,
+                prompt=prompt,
+                options=options
+            )
             
             if "response" not in response:
                 raise RuntimeError("생성 결과에 응답이 없습니다")
@@ -279,16 +176,11 @@ class OllamaClient:
             모델이 사용 가능하면 True, 아니면 False
         """
         try:
-            response = self.session.get(
-                f"{self.base_url}/api/tags",
-                timeout=10
-            )
-            response.raise_for_status()
+            models = self.client.list()
+            model_names = [m.get("model", "") for m in models.get("models", [])]
             
-            models = response.json().get("models", [])
-            model_names = [m.get("name", "").split(":")[0] for m in models]
-            
-            return model in model_names
+            # 정확한 이름 또는 접두사 매칭
+            return any(model in name for name in model_names)
         except Exception as e:
             logger.error(f"모델 가용성 확인 에러: {str(e)}")
             return False
@@ -301,14 +193,8 @@ class OllamaClient:
             모델명 목록
         """
         try:
-            response = self.session.get(
-                f"{self.base_url}/api/tags",
-                timeout=10
-            )
-            response.raise_for_status()
-            
-            models = response.json().get("models", [])
-            return [m.get("name", "") for m in models]
+            response = self.client.list()
+            return [m.get("model", "") for m in response.get("models", [])]
         except Exception as e:
             logger.error(f"모델 목록 조회 에러: {str(e)}")
             return []
@@ -324,15 +210,10 @@ class OllamaClient:
             모델 정보 딕셔너리 또는 없으면 None
         """
         try:
-            response = self.session.get(
-                f"{self.base_url}/api/tags",
-                timeout=10
-            )
-            response.raise_for_status()
-            
-            models = response.json().get("models", [])
+            response = self.client.list()
+            models = response.get("models", [])
             for m in models:
-                if m.get("name", "").startswith(model):
+                if model in m.get("model", ""):
                     return m
             
             return None

@@ -209,3 +209,5 @@ __marimo__/
 output/
 input/
 debug/
+batch_state/
+vector_store/

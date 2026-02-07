@@ -296,7 +296,7 @@ class DocumentIndexer:
             ids = [chunk.id for chunk in chunks]
             embeddings = [chunk.embedding for chunk in chunks]
             documents = [chunk.content for chunk in chunks]
-            metadatas = [chunk.metadata.dict() for chunk in chunks]
+            metadatas = [chunk.metadata.model_dump() for chunk in chunks]
             
             self.vector_store.add(
                 ids=ids,

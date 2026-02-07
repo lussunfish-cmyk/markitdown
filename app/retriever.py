@@ -10,6 +10,10 @@ from collections import defaultdict
 
 import numpy as np # type: ignore
 from rank_bm25 import BM25Okapi  # type: ignore
+try:
+    from sentence_transformers import CrossEncoder # type: ignore
+except ImportError:
+    CrossEncoder = None
 
 from .config import config
 from .ollama_client import get_ollama_client
@@ -411,15 +415,29 @@ class HybridRetriever(BaseRetriever):
 class Reranker:
     """검색 결과를 재정렬하는 리랭커."""
     
-    def __init__(self, method: str = "bm25"):
+    def __init__(self, method: str = "cross_encoder"):
         """
         리랭커를 초기화합니다.
         
         Args:
-            method: 리랭킹 방법 ("bm25", "score")
+            method: 리랭킹 방법 ("bm25", "score", "cross_encoder")
         """
         self.method = method
-        logger.info(f"✓ Reranker 초기화됨 (method={method})")
+        self.cross_encoder = None
+        
+        if self.method == "cross_encoder":
+            if CrossEncoder is None:
+                logger.warning("sentence-transformers가 설치되지 않아 bm25로 대체합니다.")
+                self.method = "bm25"
+            else:
+                try:
+                    logger.info(f"CrossEncoder 모델 로딩 중: {config.RETRIEVER.RERANKER_MODEL}")
+                    self.cross_encoder = CrossEncoder(config.RETRIEVER.RERANKER_MODEL)
+                except Exception as e:
+                    logger.error(f"CrossEncoder 로딩 실패: {e}. bm25로 대체합니다.")
+                    self.method = "bm25"
+                
+        logger.info(f"✓ Reranker 초기화됨 (method={self.method})")
     
     def rerank(
         self,
@@ -441,7 +459,9 @@ class Reranker:
         if not results:
             return []
         
-        if self.method == "bm25":
+        if self.method == "cross_encoder" and self.cross_encoder:
+            reranked = self._rerank_with_cross_encoder(query, results)
+        elif self.method == "bm25":
             reranked = self._rerank_with_bm25(query, results)
         elif self.method == "score":
             # 이미 점수로 정렬되어 있으므로 그대로 반환
@@ -454,9 +474,45 @@ class Reranker:
         if top_k is not None:
             reranked = reranked[:top_k]
         
-        logger.info(f"리랭킹 완료: {len(reranked)}개 결과")
+        logger.info(f"리랭킹 완료: {len(results)}개 -> {len(reranked)}개")
         return reranked
     
+    def _rerank_with_cross_encoder(
+        self,
+        query: str,
+        results: List[SearchResult]
+    ) -> List[SearchResult]:
+        """Cross-Encoder로 정밀하게 재정렬합니다."""
+        if not results:
+            return []
+            
+        # (쿼리, 문서) 쌍 생성
+        pairs = [[query, r.content] for r in results]
+        
+        try:
+            # 점수 계산
+            scores = self.cross_encoder.predict(pairs)
+            
+            # 결과 업데이트
+            reranked_results = []
+            for i, result in enumerate(results):
+                # 기존 메타데이터 유지하면서 점수만 업데이트
+                new_result = SearchResult(
+                    id=result.id,
+                    content=result.content,
+                    score=float(scores[i]),
+                    metadata=result.metadata
+                )
+                reranked_results.append(new_result)
+            
+            # 점수 내림차순 정렬
+            reranked_results.sort(key=lambda x: x.score, reverse=True)
+            return reranked_results
+            
+        except Exception as e:
+            logger.error(f"Cross-Encoder 리랭킹 실패: {e}")
+            return results
+
     def _rerank_with_bm25(
         self,
         query: str,
@@ -605,8 +661,8 @@ def create_retriever(
             vector_store=vector_store,
             alpha=kwargs.get("alpha", None),  # None이면 config 사용
             fusion_method=kwargs.get("fusion_method", "weighted"),
-            rerank_method=kwargs.get("rerank_method", "bm25"),
-            use_rerank=kwargs.get("use_rerank", True)
+            rerank_method=kwargs.get("rerank_method", "cross_encoder"),
+            use_rerank=kwargs.get("use_rerank", config.RETRIEVER.USE_RERANKER)
         )
     
     else:

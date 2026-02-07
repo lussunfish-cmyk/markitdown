@@ -43,22 +43,7 @@ _search_cache_misses = 0
 # 프롬프트 템플릿 (Phase 2: 최적화됨)
 # ============================================================================
 
-# 간결하고 효과적인 시스템 프롬프트
-DEFAULT_SYSTEM_PROMPT = """You are a helpful technical documentation assistant. Your task is to answer questions based ONLY on the provided context.
-
-IMPORTANT:
-- Always use information from the context to answer the question
-- If the context contains relevant information, use it to provide a helpful answer
-- Only say "No relevant information found" if the context is truly empty or completely unrelated
-- Answer in the same language as the question (Korean questions → Korean answers, English questions → English answers)"""
-
-# 출처 표시를 강화한 사용자 프롬프트
-DEFAULT_USER_PROMPT_TEMPLATE = """Context from technical documents:
-{context}
-
-Question: {question}
-
-Answer (use the context above):"""
+# 설정 파일로 이동됨 (config.PROMPT)
 
 
 # ============================================================================
@@ -166,8 +151,8 @@ class RAGPipeline:
             max_tokens: 최대 생성 토큰 수
             enable_cache: 캐싱 활성화 여부 (Phase 2)
         """
-        self.system_prompt = system_prompt or DEFAULT_SYSTEM_PROMPT
-        self.user_prompt_template = user_prompt_template or DEFAULT_USER_PROMPT_TEMPLATE
+        self.system_prompt = system_prompt or config.PROMPT.SYSTEM_PROMPT
+        self.user_prompt_template = user_prompt_template or config.PROMPT.USER_PROMPT_TEMPLATE
         
         self.top_k = top_k or config.RAG.TOP_K
         self.temperature = temperature or config.RAG.TEMPERATURE
@@ -223,10 +208,18 @@ class RAGPipeline:
         logger.info(f"RAG 쿼리 시작: '{question[:50]}...'")
         
         try:
+            # 0. 쿼리 재작성 (선택)
+            search_query = question
+            if config.RAG.ENABLE_QUERY_REWRITING:
+                rewritten_query = self._rewrite_query(question)
+                if rewritten_query != question:
+                    logger.info(f"쿼리 재작성: '{question}' -> '{rewritten_query}'")
+                    search_query = rewritten_query
+
             # 1. 문서 검색 (캐싱 적용)
             k = top_k or self.top_k
             search_start = time.time()
-            search_results = self._search_with_cache(question, k, filter_metadata)
+            search_results = self._search_with_cache(search_query, k, filter_metadata)
             if metrics:
                 metrics.search_time = time.time() - search_start
             
@@ -251,30 +244,47 @@ class RAGPipeline:
                 preview = result.content[:100].replace('\n', ' ')
                 logger.info(f"  청크 {i}: score={result.score:.4f}, content={preview}...")
             
-            # 2. 컨텍스트 구성
-            context = self._build_context(search_results)
+            # 2. 검색 결과 품질 필터링 (상대적 점수 기반)
+            filtered_results = self._filter_low_quality_results(search_results)
+            
+            if not filtered_results:
+                logger.warning("품질 필터링 후 결과 없음")
+                if metrics:
+                    metrics.query_time = time.time() - start_time
+                
+                return RAGResult(
+                    answer="관련 문서를 찾을 수 없습니다. 다른 질문을 시도해보세요.",
+                    sources=[],
+                    context_used="",
+                    num_chunks=0,
+                    metadata={"filtered_out": True},
+                    metrics=metrics
+                )
+            
+            # 3. 컨텍스트 구성
+            context = self._build_context(filtered_results)
             
             # 디버깅: 컨텍스트 미리보기
             context_preview = context[:300].replace('\n', ' ')
             logger.info(f"컨텍스트 생성됨 (길이: {len(context)}): {context_preview}...")
             
             if metrics:
-                metrics.num_chunks = len(search_results)
+                metrics.num_chunks = len(filtered_results)
                 metrics.context_length = len(context)
             
-            # 3. 프롬프트 생성
+            # 4. 프롬프트 생성
             prompt = self._build_prompt(question, context)
             
-            # 4. LLM으로 답변 생성 (시간 측정)
+            # 5. LLM으로 답변 생성 (시간 측정)
             llm_start = time.time()
             answer = self._generate_answer(prompt)
             if metrics:
                 metrics.llm_time = time.time() - llm_start
             
-            # 5. 출처 정보 추출
+            # 6. 출처 정보 추출
             sources = []
             if include_sources:
-                sources = self._extract_sources(search_results)
+                sources = self._extract_sources(filtered_results)
             
             # 전체 시간
             if metrics:
@@ -286,7 +296,7 @@ class RAGPipeline:
                 answer=answer,
                 sources=sources,
                 context_used=context,
-                num_chunks=len(search_results),
+                num_chunks=len(filtered_results),
                 metadata={
                     "top_k": k,
                     "temperature": self.temperature
@@ -343,15 +353,24 @@ class RAGPipeline:
                 metrics.query_time = time.time() - start_time
                 return metrics
             
-            # 2. 컨텍스트 구성
-            context = self._build_context(search_results)
-            metrics.num_chunks = len(search_results)
+            # 2. 품질 필터링
+            filtered_results = self._filter_low_quality_results(search_results)
+            
+            if not filtered_results:
+                logger.warning("품질 필터링 후 결과 없음")
+                yield "관련 문서를 찾을 수 없습니다. 다른 질문을 시도해보세요."
+                metrics.query_time = time.time() - start_time
+                return metrics
+            
+            # 3. 컨텍스트 구성
+            context = self._build_context(filtered_results)
+            metrics.num_chunks = len(filtered_results)
             metrics.context_length = len(context)
             
-            # 3. 프롬프트 생성
+            # 4. 프롬프트 생성
             prompt = self._build_prompt(question, context)
             
-            # 4. LLM 스트리밍 답변 생성
+            # 5. LLM 스트리밍 답변 생성
             llm_start = time.time()
             for chunk in self._stream_answer(prompt):
                 yield chunk
@@ -431,6 +450,68 @@ class RAGPipeline:
             logger.error(f"검색 실패: {str(e)}")
             return []
     
+    def _rewrite_query(self, question: str) -> str:
+        """
+        검색 품질 향상을 위해 쿼리를 재작성합니다.
+        
+        Args:
+            question: 원본 질문
+            
+        Returns:
+            재작성된 검색 쿼리
+        """
+        try:
+            prompt = config.PROMPT.QUERY_REWRITE_TEMPLATE.format(question=question)
+            
+            # 빠른 응답을 위해 낮은 temperature 사용
+            response = self.ollama_client.generate(
+                prompt=prompt,
+                temperature=0.1,
+                num_predict=50
+            )
+            
+            cleaned_response = response.strip().strip('"')
+            return cleaned_response
+            
+        except Exception as e:
+            logger.warning(f"쿼리 재작성 실패: {e}")
+            return question
+
+    def _filter_low_quality_results(
+        self,
+        results: List[SearchResult],
+        min_relative_score: float = 0.3
+    ) -> List[SearchResult]:
+        """
+        낮은 품질의 검색 결과를 필터링합니다.
+        
+        Args:
+            results: 검색 결과 리스트
+            min_relative_score: 최고 점수 대비 최소 상대 점수 (0~1)
+            
+        Returns:
+            필터링된 검색 결과
+        """
+        if not results:
+            return []
+        
+        # 최고 점수 찾기
+        max_score = max(r.score for r in results)
+        
+        if max_score <= 0:
+            return results
+        
+        # 상대 점수 기반 필터링
+        filtered = [
+            r for r in results
+            if r.score / max_score >= min_relative_score
+        ]
+        
+        if len(filtered) < len(results):
+            logger.info(f"품질 필터링: {len(results)}개 → {len(filtered)}개")
+        
+        return filtered
+    
     def _stream_answer(self, prompt: str) -> Generator[str, None, None]:
         """
         프롬프트로부터 답변을 스트리밍 방식으로 생성합니다. (Phase 2)
@@ -456,6 +537,8 @@ class RAGPipeline:
     def _build_context(self, search_results: List[SearchResult]) -> str:
         """
         검색 결과로부터 컨텍스트를 구성합니다.
+        섹션 제목이 있으면 우선적으로 표시합니다.
+        "Lost in the Middle" 방지를 위해 중요 문서를 재배치합니다.
         
         Args:
             search_results: 검색 결과 리스트
@@ -466,21 +549,87 @@ class RAGPipeline:
         if not search_results:
             return ""
         
+        # Lost in the Middle 방지: [1, 2, 3, 4, 5] -> [1, 3, 5, 4, 2]
+        # 가장 중요한(1) 문서가 맨 앞, 그 다음(2)이 맨 뒤로 배치되도록 재정렬
+        # (이미 score 순으로 정렬되어 있다고 가정)
+        reordered_results = []
+        if len(search_results) > 2:
+            # 홀수 번째는 앞에서부터, 짝수 번째는 뒤에서부터 채움 (대략적)
+            # 정확한 Lost in the Middle reordering:
+            # list[0], list[2], list[4], ..., list[3], list[1]
+            # 혹은 간단하게: 1등 -> 맨 앞, 2등 -> 맨 뒤, 3등 -> 1등 뒤...
+            # 여기서는 단순히 가장 좋은 1, 2등을 양 끝에 배치하는 전략 사용
+            
+            # deque를 사용하면 편함
+            from collections import deque
+            dq = deque(search_results)
+            reordered = []
+            while dq:
+                if len(reordered) % 2 == 0:
+                    reordered.append(dq.popleft())  # 상위를 앞쪽에
+                else:
+                    reordered.append(dq.popleft())  # 그 다음 상위를 (나중에 reverse할 뒤쪽에 배치가 아니라, 순서대로 넣는데...)
+            
+            # LangChain 스타일 Reorder:
+            # [1, 2, 3, 4, 5] -> [1, 3, 5, 4, 2]
+            # 1 (0) -> index 0
+            # 2 (1) -> index 4
+            # 3 (2) -> index 1
+            # 4 (3) -> index 3
+            # 5 (4) -> index 2
+            
+            # 구현:
+            new_order = [None] * len(search_results)
+            left = 0
+            right = len(search_results) - 1
+            for i, item in enumerate(search_results):
+                if i % 2 == 0:
+                    new_order[left] = item
+                    left += 1
+                else:
+                    new_order[right] = item
+                    right -= 1
+            reordered_results = new_order
+        else:
+            reordered_results = search_results
+
         context_parts = []
         
-        for i, result in enumerate(search_results, 1):
-            # 출처 정보 추가
-            source_info = ""
+        for i, result in enumerate(reordered_results, 1):
+            # 섹션 제목 우선 사용 (청크 품질 향상)
+            header = ""
             if result.metadata:
-                source = result.metadata.get("source", "알 수 없음")
-                source_info = f"[출처: {source}]"
+                section_title = result.metadata.get("section_title", "")
+                source_name = result.metadata.get("source", "")
+                
+                # 원래 순위(Rank) 정보도 포함하면 좋음
+                # result 객체에 원래 rank 정보가 없으므로 생략하거나, search_results에서 index 찾기
+                original_rank = search_results.index(result) + 1
+                
+                if section_title:
+                    # 섹션 제목이 있으면 컨텍스트 헤더로 사용
+                    header = f"[Doc {i} / Rank {original_rank}] {section_title}"
+                    if source_name:
+                        # 파일명만 추출 (경로 제거)
+                        from pathlib import Path
+                        filename = Path(source_name).name
+                        header += f" (from {filename})"
+                elif source_name:
+                    from pathlib import Path
+                    filename = Path(source_name).name
+                    header = f"[Doc {i} / Rank {original_rank}] (Source: {filename})"
+                else:
+                    header = f"[Doc {i} / Rank {original_rank}]"
+            else:
+                header = f"[Doc {i}]"
             
-            # 청크 내용
+            # 컨텍스트 구성
             context_parts.append(
-                f"--- 문서 {i} {source_info} ---\n{result.content}\n"
+                f"{header}\n{result.content.strip()}"
             )
         
-        context = "\n".join(context_parts)
+        # 문서들 사이에 빈 줄로 구분
+        context = "\n\n".join(context_parts)
         
         # 최대 길이 확인 (간단한 문자 기반 체크)
         max_length = config.RAG.MAX_CONTEXT_LENGTH
@@ -523,7 +672,10 @@ class RAGPipeline:
             생성된 답변
         """
         try:
-            # 디버깅: 프롬프트 미리보기
+            # 디버깅: 프롬프트 전체 로그 출력
+            logger.info(f"LLM 전체 프롬프트:\n{prompt}")
+            
+            # 디버깅: 프롬프트 미리보기 (기존 로그)
             prompt_preview = prompt[:500].replace('\n', ' ')
             logger.info(f"LLM 프롬프트 전송 중 (길이: {len(prompt)}): {prompt_preview}...")
             

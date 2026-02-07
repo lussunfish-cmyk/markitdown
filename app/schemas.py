@@ -33,6 +33,7 @@ class DocumentMetadata(BaseModel):
     chunk_id: int = Field(..., description="문서 내 청크 인덱스")
     total_chunks: int = Field(..., description="문서의 총 청크 수")
     created_at: str = Field(..., description="인덱싱 타임스탬프")
+    section_title: Optional[str] = Field(None, description="섹션 제목 (헤더 컨텍스트)")
 
 
 class DocumentChunk(BaseModel):

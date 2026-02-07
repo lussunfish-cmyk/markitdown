@@ -4,7 +4,7 @@
 
 import logging
 import hashlib
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from datetime import datetime
 from pathlib import Path
 
@@ -189,12 +189,20 @@ class TextChunker:
 
 
 class MarkdownChunker(TextChunker):
-    """마크다운 구조를 인식하는 텍스트 청커."""
+    """마크다운 구조를 인식하는 향상된 텍스트 청커.
+    
+    개선 사항:
+    - 헤더 기반 섹션 분할
+    - 각 청크에 상위 헤더 컨텍스트 추가
+    - 문장 경계 존중
+    - 의미론적으로 일관된 청크 생성
+    """
     
     def __init__(
         self,
         chunk_size: Optional[int] = None,
-        chunk_overlap: Optional[int] = None
+        chunk_overlap: Optional[int] = None,
+        add_header_context: bool = True
     ):
         """
         마크다운 청커를 초기화합니다.
@@ -202,49 +210,155 @@ class MarkdownChunker(TextChunker):
         Args:
             chunk_size: 청크 크기
             chunk_overlap: 청크 간 겹침
+            add_header_context: 각 청크에 상위 헤더 추가 여부
         """
-        # 마크다운 구조를 고려한 구분자
-        md_separators = [
-            "\n## ",      # 2차 헤더
-            "\n### ",     # 3차 헤더
-            "\n#### ",    # 4차 헤더
-            "\n\n",       # 문단
-            "\n",         # 줄
-            ". ",         # 문장
-            " ",          # 단어
-            ""            # 문자
-        ]
-        
         super().__init__(
             chunk_size=chunk_size,
             chunk_overlap=chunk_overlap,
-            separators=md_separators
+            separators=config.CHUNKING.MD_SEPARATORS
         )
+        self.add_header_context = add_header_context
     
     def split_text(self, text: str) -> List[str]:
         """
         마크다운 텍스트를 구조를 고려하여 분할합니다.
+        헤더 계층을 추출하여 각 청크에 컨텍스트를 추가합니다.
         
         Args:
             text: 마크다운 텍스트
             
         Returns:
-            청크 목록
+            청크 목록 (헤더 컨텍스트 포함)
         """
-        # 1차 헤더(#)로 먼저 분할
-        sections = text.split("\n# ")
+        if not self.add_header_context:
+            # 기본 분할만 수행
+            return self._basic_split(text)
         
+        # 헤더 기반 섹션으로 분할
+        sections = self._extract_sections(text)
+        
+        # 각 섹션을 청크로 변환
         chunks = []
-        for i, section in enumerate(sections):
-            # 첫 번째가 아니면 헤더 복원
-            if i > 0:
-                section = "# " + section
-            
-            # 각 섹션을 부모 클래스의 분할 로직으로 처리
-            section_chunks = super().split_text(section)
+        for section in sections:
+            section_chunks = self._chunk_section(section)
             chunks.extend(section_chunks)
         
         return chunks
+    
+    def _basic_split(self, text: str) -> List[str]:
+        """기본 분할 (헤더 컨텍스트 없음)"""
+        sections = text.split("\n# ")
+        chunks = []
+        for i, section in enumerate(sections):
+            if i > 0:
+                section = "# " + section
+            section_chunks = super().split_text(section)
+            chunks.extend(section_chunks)
+        return chunks
+    
+    def _extract_sections(self, text: str) -> List[Dict[str, Any]]:
+        """
+        텍스트를 헤더 기반 섹션으로 분할하고 계층 정보를 추출합니다.
+        
+        Returns:
+            [{
+                'level': 헤더 레벨,
+                'title': 헤더 제목,
+                'content': 섹션 내용,
+                'parent_headers': 상위 헤더 리스트
+            }]
+        """
+        import re
+        
+        lines = text.split('\n')
+        sections = []
+        current_headers = {}  # level -> title 매핑
+        current_section = {'level': 0, 'title': '', 'content': [], 'parent_headers': []}
+        
+        for line in lines:
+            # 헤더 감지
+            header_match = re.match(r'^(#{1,6})\s+(.+)$', line)
+            
+            if header_match:
+                # 이전 섹션 저장
+                if current_section['content']:
+                    current_section['content'] = '\n'.join(current_section['content'])
+                    sections.append(current_section.copy())
+                
+                # 새 섹션 시작
+                level = len(header_match.group(1))
+                title = header_match.group(2).strip()
+                
+                # 현재 레벨 이상의 헤더 제거
+                current_headers = {k: v for k, v in current_headers.items() if k < level}
+                current_headers[level] = title
+                
+                # 상위 헤더 목록 생성
+                parent_headers = [current_headers[l] for l in sorted(current_headers.keys()) if l < level]
+                
+                current_section = {
+                    'level': level,
+                    'title': title,
+                    'content': [line],
+                    'parent_headers': parent_headers
+                }
+            else:
+                # 일반 텍스트
+                current_section['content'].append(line)
+        
+        # 마지막 섹션 저장
+        if current_section['content']:
+            current_section['content'] = '\n'.join(current_section['content'])
+            sections.append(current_section)
+        
+        return sections
+    
+    def _chunk_section(self, section: Dict[str, Any]) -> List[str]:
+        """
+        섹션을 청크로 분할하고 각 청크에 컨텍스트를 추가합니다.
+        
+        Args:
+            section: 섹션 정보
+            
+        Returns:
+            컨텍스트가 포함된 청크 목록
+        """
+        content = section['content']
+        parent_headers = section['parent_headers']
+        title = section['title']
+        
+        # 컨텍스트 헤더 생성 (상위 헤더들)
+        context_header = ""
+        if parent_headers:
+            context_header = " > ".join(parent_headers)
+            if title:
+                context_header += " > " + title
+        elif title:
+            context_header = title
+        
+        # 섹션이 충분히 작으면 그대로 반환
+        if len(content) <= self.chunk_size:
+            if context_header:
+                return [f"[{context_header}]\n\n{content}"]
+            return [content]
+        
+        # 큰 섹션은 분할
+        base_chunks = super().split_text(content)
+        
+        # 각 청크에 컨텍스트 추가
+        if context_header:
+            context_prefix = f"[{context_header}]\n\n"
+            # 컨텍스트 길이를 고려하여 청크 크기 조정
+            chunks_with_context = []
+            for chunk in base_chunks:
+                # 컨텍스트가 너무 길어지지 않도록 청크 일부를 줄일 수 있음
+                available_size = self.chunk_size - len(context_prefix)
+                if available_size > 200:  # 최소 200자는 보장
+                    chunk = chunk[:available_size]
+                chunks_with_context.append(context_prefix + chunk)
+            return chunks_with_context
+        
+        return base_chunks
 
 
 class DocumentEmbedder:
@@ -317,6 +431,9 @@ class DocumentEmbedder:
                 chunk_id_str = f"{source}_{idx}"
                 chunk_hash = hashlib.md5(chunk_id_str.encode()).hexdigest()
                 
+                # 청크에서 컨텍스트 헤더 추출 (있는 경우)
+                section_title = self._extract_section_title(chunk_text)
+                
                 # 메타데이터 생성
                 metadata = DocumentMetadata(
                     source=source,
@@ -324,6 +441,10 @@ class DocumentEmbedder:
                     total_chunks=total_chunks,
                     created_at=created_at
                 )
+                
+                # 섹션 제목이 있으면 메타데이터에 추가
+                if section_title:
+                    metadata.section_title = section_title
                 
                 # DocumentChunk 생성
                 doc_chunk = DocumentChunk(
@@ -343,6 +464,30 @@ class DocumentEmbedder:
             logger.info(f"임베딩 생성 완료: {len(document_chunks)}/{total_chunks} 성공")
         
         return document_chunks
+    
+    def _extract_section_title(self, chunk_text: str) -> Optional[str]:
+        """
+        청크에서 섹션 제목을 추출합니다.
+        
+        Args:
+            chunk_text: 청크 텍스트
+            
+        Returns:
+            섹션 제목 (없으면 None)
+        """
+        import re
+        
+        # [제목] 형식의 컨텍스트 헤더 추출
+        context_match = re.match(r'^\[(.+?)\]', chunk_text)
+        if context_match:
+            return context_match.group(1)
+        
+        # 일반 마크다운 헤더 추출 (첫 번째 헤더)
+        header_match = re.search(r'^#{1,6}\s+(.+)$', chunk_text, re.MULTILINE)
+        if header_match:
+            return header_match.group(1).strip()
+        
+        return None
     
     def embed_document_from_file(
         self,

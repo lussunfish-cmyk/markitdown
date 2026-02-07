@@ -18,6 +18,10 @@ services:
       - OLLAMA_EMBEDDING_MODEL=mxbai-embed-large
       - OLLAMA_LLM_MODEL=gemma2
       - VECTOR_STORE_DIR=/app/vector_store
+      # 오프라인 및 로컬 모델 설정
+      - HF_HUB_OFFLINE=1
+      - TRANSFORMERS_OFFLINE=1
+      - RETRIEVER_RERANKER_MODEL=/app/models/bge-reranker-v2-m3
       - LOG_LEVEL=INFO
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility

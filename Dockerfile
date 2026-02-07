@@ -10,6 +10,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
+# 모델 다운로드 설정
+COPY download_reranker_model.py .
+RUN python download_reranker_model.py
+
 COPY app ./app
 
 # 필요한 디렉토리 생성

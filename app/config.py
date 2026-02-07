@@ -70,14 +70,20 @@ class VectorStoreConfig:
 class ChunkingConfig:
     """텍스트 분할 설정."""
     
-    # 청크 크기 (문자 단위) - mxbai-embed-large 토큰 제한 고려
-    CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "512"))
+    # 청크 크기 (문자 단위) - gemma2를 위해 더 큰 컨텍스트 제공
+    CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "800"))
     
-    # 청크 간 겹침 (문자 단위)
-    CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "128"))
+    # 청크 간 겹침 (문자 단위) - 컨텍스트 연속성 향상
+    CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "200"))
     
     # 분할 구분자 (우선순위 순서)
     SEPARATORS = ["\n\n", "\n", ".", " ", ""]
+    
+    # 마크다운 구조를 고려한 구분자
+    MD_SEPARATORS = [
+        "\n## ", "\n### ", "\n#### ",
+        "\n\n", "\n", ". ", " ", ""
+    ]
 
 
 # ============================================================================
@@ -89,13 +95,20 @@ class RetrieverConfig:
     
     # 하이브리드 검색 가중치 (벡터 검색 vs 키워드 검색)
     # alpha=1.0: 벡터 검색만, alpha=0.0: 키워드 검색만
-    HYBRID_ALPHA = float(os.getenv("RETRIEVER_HYBRID_ALPHA", "0.7"))
+    # 0.8로 조정: 벡터 검색을 더 선호하면서 키워드도 고려
+    HYBRID_ALPHA = float(os.getenv("RETRIEVER_HYBRID_ALPHA", "0.8"))
     
     # RRF (Reciprocal Rank Fusion) 파라미터
     RRF_K = int(os.getenv("RETRIEVER_RRF_K", "60"))
     
     # 기본 검색 타입 ("vector", "bm25", "hybrid", "advanced")
     DEFAULT_TYPE = os.getenv("RETRIEVER_DEFAULT_TYPE", "advanced")
+    
+    # 리랭커 설정
+    # 기존 English 모델인 'cross-encoder/ms-marco-MiniLM-L-6-v2'에서
+    # 다국어 지원 및 성능이 월등한 'BAAI/bge-reranker-v2-m3'로 변경
+    RERANKER_MODEL = os.getenv("RETRIEVER_RERANKER_MODEL", "BAAI/bge-reranker-v2-m3")
+    USE_RERANKER = os.getenv("RETRIEVER_USE_RERANKER", "true").lower() == "true"
 
 
 # ============================================================================
@@ -122,17 +135,20 @@ class CacheConfig:
 class RAGConfig:
     """RAG(검색 증강 생성) 설정."""
     
-    # 검색 설정
-    TOP_K = int(os.getenv("RAG_TOP_K", "3"))
+    # 검색 설정 (더 많은 컨텍스트로 품질 향상)
+    TOP_K = int(os.getenv("RAG_TOP_K", "5"))
     SIMILARITY_THRESHOLD = float(os.getenv("RAG_SIMILARITY_THRESHOLD", "0.5"))
     
-    # LLM 생성 설정
-    TEMPERATURE = float(os.getenv("RAG_TEMPERATURE", "0.7"))
+    # LLM 생성 설정 (RAG에 최적화: 낮은 temperature로 더 정확한 답변)
+    TEMPERATURE = float(os.getenv("RAG_TEMPERATURE", "0.3"))
     TOP_P = float(os.getenv("RAG_TOP_P", "0.9"))
-    MAX_TOKENS = int(os.getenv("RAG_MAX_TOKENS", "512"))
+    MAX_TOKENS = int(os.getenv("RAG_MAX_TOKENS", "2048"))
     
     # 컨텍스트 설정
     MAX_CONTEXT_LENGTH = int(os.getenv("RAG_MAX_CONTEXT_LENGTH", "8192"))
+    
+    # 쿼리 최적화 설정
+    ENABLE_QUERY_REWRITING = os.getenv("RAG_ENABLE_QUERY_REWRITING", "true").lower() == "true"
 
 
 class ConversionConfig:
@@ -220,6 +236,76 @@ class APIConfig:
 
 
 # ============================================================================
+# 프롬프트 설정 (RAG)
+# ============================================================================
+
+class PromptConfig:
+    """프롬프트 템플릿 설정."""
+    
+    # 시스템 프롬프트
+    SYSTEM_PROMPT = """You are an expert Technical Writer and Analyst. Your goal is to provide a comprehensive, structured, and easy-to-understand answer in Korean based on the provided English reference documents.
+
+### **CRITICAL GUIDELINES**:
+1.  **SOURCE MATERIAL**: Use ONLY the provided provided "Reference Documents". Do not use outside knowledge. If the answer is not in the text, state "제공된 문서에 관련 정보가 없습니다."
+2.  **LANGUAGE**: The user asks in Korean, and you MUST answer in **Korean**.
+3.  **TONE & STYLE**: 
+    - Use a professional, explanatory tone.
+    - Do NOT just translate or list facts. **Explain** the concepts so a reader can understand the "Why" and "How".
+    - Connect related concepts logically.
+4.  **TERMINOLOGY**: 
+    - Keep English technical acronyms (e.g., PCEF, gNB, 5G Core, AMF) in **English**.
+    - **EXPLAIN** the term in Korean when first used or within the context.
+      - Bad: "PCEF는 Qos를 수행합니다."
+      - Good: "PCEF(Policy and Charging Enforcement Function)는 정책 및 과금 집행 기능을 담당하며, 사용자의 QoS를 제어합니다 [1]."
+5.  **CITATIONS**: precise citations like `[1]`, `[2]` are required at the end of sentences derived from the text.
+
+### **OUTPUT STRUCTURE**:
+Please organize your response in the following Markdown format:
+
+## **1. 요약 (Summary)**
+- Provide a concise summary of the answer (2-3 sentences).
+
+## **2. 상세 설명 (Detailed Explanation)**
+- **정의 (Definition)**: What is the core concept?
+- **주요 역할 및 원리 (Role & Mechanism)**: How does it work? Detailed explanation using the context.
+
+## **3. 주요 구성 요소 및 특징 (Components & Features)**
+- List key components, attributes, or constraints mentioned.
+- Use bullet points.
+
+## **4. 예시 또는 관련 흐름 (Examples or Related Flows)** (If applicable)
+- Describe any specific examples, call flows, or use cases found in the text.
+"""
+
+    # 사용자 프롬프트 템플릿
+    USER_PROMPT_TEMPLATE = """=== REFERENCE DOCUMENTS (Ranked by relevance) ===
+{context}
+
+=== QUESTION ===
+{question}
+
+=== GUIDELINES ===
+- Answer in Korean.
+- Follow the structure: Summary -> Detailed Explanation -> Components -> Examples.
+- Keep technical terms in English but explain them.
+
+=== ANSWER ===
+"""
+
+    # 쿼리 재작성 프롬프트 템플릿
+    QUERY_REWRITE_TEMPLATE = """You are a search query optimizer. 
+Original Question: "{question}"
+
+Task: Rewrite the question into a better search query for a technical documentation search engine.
+- Remove conversational filler (e.g., "Hi", "Can you tell me")
+- Focus on key technical terms
+- Expand abbreviations if ambiguous
+- Return ONLY the rewritten query text. Do not explain.
+
+Rewritten Query:"""
+
+
+# ============================================================================
 # 통합 설정
 # ============================================================================
 
@@ -238,6 +324,7 @@ class AppConfig:
     INDEXING = IndexingConfig()
     BATCH = BatchConfig()
     API = APIConfig()
+    PROMPT = PromptConfig()
     
     @classmethod
     def get_all_settings(cls) -> dict:

@@ -105,27 +105,28 @@ class BatchConfig:
 ---
 
 ### 6. **`retriever.py`** ✅
-**상태**: 구현 완료
+**상태**: 구현 완료 (Hybrid Search + Reranking)
 
 **주요 기능**:
-- AdvancedRetriever 클래스
-- 검색 로직 세분화
-- search() 메서드로 유사도 검색
-- 메타데이터 필터링
+- **AdvancedRetriever**: 벡터 + 키워드 검색 결합
+- **Hybrid Search**: Semantic(Vector) + Lexical(BM25)
+- **Reciprocal Rank Fusion (RRF)**: 검색 결과의 순위 기반 통합
+- **Reranker**: BAAI/bge-reranker-v2-m3 사용하여 최종 순위 재조정
+- search() 메서드로 고품질 문서 추출
 
 **참고**: [retriever 구현.md](./구현/retriever%20구현.md)
 
 ---
 
 ### 7. **`rag.py`** ✅
-**상태**: 구현 완료
+**상태**: 구현 완료 (Phase 2 개선 적용)
 
 **주요 기능**:
 - RAGPipeline 클래스
-- 쿼리 처리 및 검색
-- 컨텍스트 구성
-- gemma2를 통한 답변 생성
-- 프롬프트 템플릿 관리
+- **Query Rewriting**: LLM을 이용한 검색 쿼리 최적화
+- **Cache System**: 검색 결과 및 임베딩 캐싱 (TTL 적용)
+- **Performance Metrics**: 검색/생성 시간, 청크 사용량 등 측정
+- gemma2를 통한 답변 생성 및 프롬프트 관리
 
 **참고**: [rag 구현.md](./구현/rag%20구현.md)
 
@@ -260,11 +261,17 @@ BatchStateManager.create_batch()
 ```
 사용자 질문
     ↓
-임베딩 생성 (쿼리)
+쿼리 재작성 (Optional)
     ↓
-ChromaDB 유사도 검색 (top_k=5)
+임베딩 생성 (쿼리) + 키워드 추출
     ↓
-관련 문서 조각 추출
+Hybrid Search
+  ├─► ChromaDB (Vector Search): 의미적 유사성
+  └─► BM25 (Keyword Search): 정확한 키워드 매칭
+    ↓
+Rank Fusion (Weighted / RRF)
+    ↓
+Reranking (BGE-M3) - 상위 문서 재정렬
     ↓
 컨텍스트 구성
     ↓
@@ -285,11 +292,10 @@ gemma2 모델 호출
 ### 핵심 기술
 - **Python 3.10+**: 메인 언어
 - **FastAPI**: REST API 프레임워크
-- **Pydantic V2**: 데이터 검증 (model_dump() 사용)
 - **ChromaDB**: 벡터 저장소
-- **Ollama**: LLM 및 임베딩 서버
-  - gemma2: 답변 생성
-  - mxbai-embed-large: 임베딩 생성
+- **Ollama**: LLM 및 임베딩 (gemma2, mxbai-embed-large)
+- **Rank_BM25**: 키워드 검색 알고리즘
+- **Sentence-Transformers**: Cross-Encoder 리랭킹 (BGE-M3)
 
 ### 인프라
 - **Docker Compose**: 컨테이너 오케스트레이션

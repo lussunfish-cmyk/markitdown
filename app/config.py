@@ -96,7 +96,7 @@ class RetrieverConfig:
     # 하이브리드 검색 가중치 (벡터 검색 vs 키워드 검색)
     # alpha=1.0: 벡터 검색만, alpha=0.0: 키워드 검색만
     # 0.8로 조정: 벡터 검색을 더 선호하면서 키워드도 고려
-    HYBRID_ALPHA = float(os.getenv("RETRIEVER_HYBRID_ALPHA", "0.8"))
+    HYBRID_ALPHA = float(os.getenv("RETRIEVER_HYBRID_ALPHA", "0.5"))
     
     # RRF (Reciprocal Rank Fusion) 파라미터
     RRF_K = int(os.getenv("RETRIEVER_RRF_K", "60"))
@@ -300,6 +300,7 @@ Task: Rewrite the question into a better search query for a technical documentat
 - Remove conversational filler (e.g., "Hi", "Can you tell me")
 - Focus on key technical terms
 - Expand abbreviations if ambiguous
+- Include synonyms or related technical terms to broaden search coverage (e.g., "mobile" -> "mobile terminal", "UE", "device")
 - Return ONLY the rewritten query text. Do not explain.
 
 Rewritten Query:"""

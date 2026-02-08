@@ -8,9 +8,11 @@ from __future__ import annotations
 import json
 import logging
 import os
+import shutil
 import subprocess
 import tempfile
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 
@@ -34,6 +36,13 @@ from .schemas import (
     RetrievalResult,
     SearchResult
 )
+from .schemas_eval import (
+    TestsetGenerateRequest,
+    TestsetGenerateResponse,
+    EvaluationRequest,
+    EvaluationResponse
+)
+from .evaluator import generate_testset_logic, evaluate_retrieval_logic
 
 # ============================================================================
 # 설정 및 초기화
@@ -1044,3 +1053,87 @@ async def search_documents(
     except Exception as e:
         logger.error(f"문서 검색 실패: {e}")
         raise HTTPException(500, f"문서 검색 실패: {str(e)}")
+
+
+@app.get("/testset/download")
+async def download_testset(file_path: str = Query(..., description="다운로드할 테스트셋 파일 경로")):
+    """
+    생성된 테스트셋 CSV 파일을 다운로드합니다.
+    """
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail=f"File not found: {file_path}")
+    
+    return FileResponse(
+        path=file_path,
+        filename=os.path.basename(file_path),
+        media_type='text/csv'
+    )
+
+
+@app.post("/testset/generate", response_model=TestsetGenerateResponse)
+async def generate_testset(request: TestsetGenerateRequest):
+    """
+    테스트셋 생성 API
+    
+    지정된 입력 디렉토리의 문서들을 바탕으로 Ragas를 사용하여 테스트 데이터셋(질문-답변 쌍)을 생성합니다.
+    """
+    try:
+        sample_preview = await generate_testset_logic(
+            input_dir=request.input_dir,
+            output_file=request.output_file,
+            test_size=request.test_size
+        )
+        return TestsetGenerateResponse(
+            status="success",
+            message=f"Testset generated (saved to {request.output_file})",
+            output_file=request.output_file,
+            sample_preview=sample_preview
+        )
+    except Exception as e:
+        logger.error(f"Testset generation failed: {e}")
+        raise HTTPException(500, f"Testset generation failed: {str(e)}")
+
+
+@app.post("/evaluate", response_model=EvaluationResponse)
+async def evaluate_retrieval(
+    file: UploadFile = File(..., description="수동으로 검증/수정된 테스트셋 CSV 파일"),
+    top_k: int = Form(5, description="검색할 상위 문서 수")
+):
+    """
+    검색 성능 평가 API
+    
+    업로드된 테스트셋(CSV)을 사용하여 RAG 검색 시스템의 성능(Recall, Precision 등)을 평가합니다.
+    (사용자가 편집한 testset.csv를 업로드하여 평가 수행)
+    """
+    try:
+        # 1. 파일 저장 (output 디렉토리에 저장하여 결과 파일도 영속시킴)
+        output_dir = Path("output")
+        output_dir.mkdir(parents=True, exist_ok=True)
+        
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        safe_filename = f"eval_upload_{timestamp}_{file.filename}"
+        saved_file_path = output_dir / safe_filename
+        
+        with open(saved_file_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+            
+        logger.info(f"Evaluation file saved to: {saved_file_path}")
+
+        # 2. 평가 로직 실행
+        metrics = await evaluate_retrieval_logic(
+            testset_path=str(saved_file_path),
+            top_k=top_k
+        )
+        
+        results_file = metrics.get("detail_file", "")
+        
+        return EvaluationResponse(
+            status="success",
+            message="Evaluation completed",
+            results_file=results_file,
+            metrics=metrics
+        )
+    except Exception as e:
+        logger.error(f"Evaluation failed: {e}")
+        raise HTTPException(500, f"Evaluation failed: {str(e)}")
+

@@ -208,18 +208,32 @@ class RAGPipeline:
         logger.info(f"RAG 쿼리 시작: '{question[:50]}...'")
         
         try:
-            # 0. 쿼리 재작성 (선택)
-            search_query = question
+            # 0. 쿼리 확장 (Query Expansion)
+            # 원본 질문과 재작성된 쿼리를 모두 사용하여 검색 범위를 넓힘
+            search_queries = [question]
             if config.RAG.ENABLE_QUERY_REWRITING:
                 rewritten_query = self._rewrite_query(question)
                 if rewritten_query != question:
                     logger.info(f"쿼리 재작성: '{question}' -> '{rewritten_query}'")
-                    search_query = rewritten_query
+                    search_queries.append(rewritten_query)
 
-            # 1. 문서 검색 (캐싱 적용)
+            # 1. 다중 쿼리 검색 및 결과 병합
             k = top_k or self.top_k
+            # 쿼리 확장 시 각 쿼리별로 더 많은 후보를 가져와서 병합 (Recall 향상)
+            candidate_k = k * 3
             search_start = time.time()
-            search_results = self._search_with_cache(search_query, k, filter_metadata)
+            
+            merged_results: Dict[str, SearchResult] = {}
+            for query_text in search_queries:
+                results = self._search_with_cache(query_text, candidate_k, filter_metadata)
+                for result in results:
+                    # 이미 있는 문서라면 더 높은 점수로 업데이트
+                    if result.id not in merged_results or result.score > merged_results[result.id].score:
+                        merged_results[result.id] = result
+            
+            # 점수순 정렬 후 상위 k개 선택
+            search_results = sorted(merged_results.values(), key=lambda x: x.score, reverse=True)[:k]
+            
             if metrics:
                 metrics.search_time = time.time() - search_start
             

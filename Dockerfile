@@ -24,4 +24,5 @@ VOLUME ["/app/output", "/app/input", "/app/vector_store"]
 EXPOSE 8000
 
 # Python -m을 사용하여 모듈 경로 문제 해결
-CMD ["python", "-m", "uvicorn", "app.converter:app", "--host", "0.0.0.0", "--port", "8000"]
+# Ragas와의 호환성(nest_asyncio)을 위해 --loop asyncio 옵션 추가 (uvloop 비활성화)
+CMD ["python", "-m", "uvicorn", "app.converter:app", "--host", "0.0.0.0", "--port", "8000", "--loop", "asyncio"]

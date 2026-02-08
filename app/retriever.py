@@ -7,6 +7,8 @@ import logging
 from typing import List, Dict, Any, Optional, Tuple
 from abc import ABC, abstractmethod
 from collections import defaultdict
+import re
+import string
 
 import numpy as np # type: ignore
 from rank_bm25 import BM25Okapi  # type: ignore
@@ -156,6 +158,12 @@ class BM25Retriever(BaseRetriever):
         self._build_index()
         logger.info("✓ BM25Retriever 초기화됨")
     
+    def _tokenize(self, text: str) -> List[str]:
+        """텍스트를 토큰화합니다 (구두점 제거)."""
+        text = text.lower()
+        text = re.sub(f'[{re.escape(string.punctuation)}]', ' ', text)
+        return text.split()
+
     def _build_index(self) -> None:
         """BM25 인덱스를 구축합니다."""
         try:
@@ -179,7 +187,7 @@ class BM25Retriever(BaseRetriever):
                 return
             
             # 토큰화 (간단한 공백 분리)
-            tokenized_docs = [doc.lower().split() for doc in self.documents]
+            tokenized_docs = [self._tokenize(doc) for doc in self.documents]
             
             # BM25 인덱스 생성
             self.bm25_index = BM25Okapi(tokenized_docs)
@@ -209,7 +217,7 @@ class BM25Retriever(BaseRetriever):
             return []
         
         # 쿼리 토큰화
-        tokenized_query = query.lower().split()
+        tokenized_query = self._tokenize(query)
         
         # BM25 점수 계산
         scores = self.bm25_index.get_scores(tokenized_query)
@@ -490,8 +498,21 @@ class Reranker:
         pairs = [[query, r.content] for r in results]
         
         try:
+            # 메모리 확보를 위해 캐시 정리
+            try:
+                import torch
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+            except ImportError:
+                pass
+
             # 점수 계산
-            scores = self.cross_encoder.predict(pairs)
+            # OOM 방지를 위해 배치 사이즈 대폭 제한 (12 -> 4)
+            scores = self.cross_encoder.predict(
+                pairs, 
+                batch_size=4,
+                show_progress_bar=False
+            )
             
             # 결과 업데이트
             reranked_results = []
@@ -513,6 +534,12 @@ class Reranker:
             logger.error(f"Cross-Encoder 리랭킹 실패: {e}")
             return results
 
+    def _tokenize(self, text: str) -> List[str]:
+        """텍스트를 토큰화합니다 (구두점 제거)."""
+        text = text.lower()
+        text = re.sub(f'[{re.escape(string.punctuation)}]', ' ', text)
+        return text.split()
+
     def _rerank_with_bm25(
         self,
         query: str,
@@ -532,8 +559,8 @@ class Reranker:
         documents = [result.content for result in results]
         
         # 토큰화
-        tokenized_docs = [doc.lower().split() for doc in documents]
-        tokenized_query = query.lower().split()
+        tokenized_docs = [self._tokenize(doc) for doc in documents]
+        tokenized_query = self._tokenize(query)
         
         # BM25 인덱스 생성 및 점수 계산
         bm25 = BM25Okapi(tokenized_docs)
@@ -605,7 +632,7 @@ class AdvancedRetriever(BaseRetriever):
         # 1. 하이브리드 검색으로 후보 추출
         if self.use_rerank:
             # 리랭킹을 사용하는 경우 더 많은 후보 확보
-            candidates = self.hybrid_retriever.search(query, k=k*4)
+            candidates = self.hybrid_retriever.search(query, k=k*10)
         else:
             candidates = self.hybrid_retriever.search(query, k=k)
         

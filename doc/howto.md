@@ -19,6 +19,11 @@ FastAPI 기반 마크다운 변환 + RAG 통합 서비스입니다.
 - **AI 답변 생성**: Ollama gemma2 모델로 답변
 - **출처 추적**: 답변 근거 문서 제공
 
+### 4. 평가 (Evaluation)
+- **테스트셋 생성**: 문서 기반 QA 데이터셋 자동 생성 (Ragas 활용)
+- **성능 평가**: Recall, Precision, F1, MRR, Hit Rate 측정
+- **결과 분석**: 상세 결과 CSV 제공
+
 ## 📦 지원 파일 형식
 
 - **문서**: PDF, DOCX, DOC, PPTX, PPT, XLSX, XLS
@@ -83,6 +88,9 @@ volumes:
 | **RAG** | GET | `/search` | 유사 문서 검색 |
 | **유틸** | GET | `/health` | 헬스 체크 |
 | **유틸** | GET | `/supported-formats` | 지원 파일 형식 |
+| **평가** | POST | `/testset/generate` | 테스트셋 생성 |
+| **평가** | POST | `/evaluate` | 검색 성능 평가 |
+| **평가** | GET | `/testset/download` | 테스트셋 다운로드 |
 
 ---
 
@@ -696,6 +704,74 @@ curl "http://localhost:8000/search?query=5G%20네트워크&top_k=5"
 - 특정 주제 관련 문서 찾기
 - 답변 생성 전 관련 자료 확인
 - 문서 연관성 분석
+
+---
+
+## 📊 평가 API (Evaluation)
+
+### 1. POST /testset/generate - 테스트셋 생성
+
+**목적**: 인덱싱된 문서를 바탕으로 RAG 성능 평가를 위한 질문-답변 쌍(Ground Truth)을 자동으로 생성합니다.
+
+**요청**:
+```bash
+curl -X POST "http://localhost:8000/testset/generate" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "input_dir": "/app/output",
+    "output_file": "output/testset.csv",
+    "test_size": 10
+  }'
+```
+
+**파라미터**:
+- `input_dir`: 소스 문서 디렉토리 (기본: `/app/output`)
+- `output_file`: 생성될 CSV 파일 경로
+- `test_size`: 생성할 질문 개수
+
+**응답 예시**:
+```json
+{
+  "status": "success",
+  "message": "Testset generated (saved to output/testset.csv)",
+  "output_file": "output/testset.csv",
+  "sample_preview": [...]
+}
+```
+
+---
+
+### 2. POST /evaluate - 검색 성능 평가
+
+**목적**: 생성된 테스트셋(CSV)을 사용하여 현재 RAG 시스템의 검색 성능을 평가합니다.
+
+**요청**:
+```bash
+curl -X POST "http://localhost:8000/evaluate" \
+  -F "file=@output/testset.csv" \
+  -F "top_k=5"
+```
+
+**파라미터**:
+- `file`: 테스트셋 CSV 파일 (필수)
+- `top_k`: 평가 시 검색할 문서 수 (기본: 5)
+
+**응답 예시**:
+```json
+{
+  "status": "success",
+  "message": "Evaluation completed",
+  "results_file": "output/eval_upload_20240208_testset_results.csv",
+  "metrics": {
+    "total_questions": 10,
+    "avg_recall": 0.8,
+    "avg_precision": 0.6,
+    "avg_f1": 0.68,
+    "avg_mrr": 0.75,
+    "avg_hit_rate": 0.9
+  }
+}
+```
 
 ---
 

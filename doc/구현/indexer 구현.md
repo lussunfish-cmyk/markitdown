@@ -37,6 +37,12 @@ markitdown/app/indexer.py
   5. **저장**: 생성된 벡터와 메타데이터를 `VectorStore`에 추가.
   6. **상태 업데이트**: 성공 시 `IndexStateManager`에 기록.
 
+- **기타 메서드**:
+  - `index_directory`: 폴더 내 모든 파일을 일괄 인덱싱.
+  - `delete_document`: 특정 파일의 인덱스 데이터 삭제.
+  - `rebuild_index`: 전체 인덱스 초기화 및 재구축.
+  - `get_stats`: 인덱싱 현황 통계 반환.
+
 ## 데이터 흐름
 
 1. 파일 시스템에서 `.md` 파일 감지.

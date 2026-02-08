@@ -2,7 +2,7 @@
 
 ## 개요
 
-문서 변환을 담당하는 REST API 서비스입니다. MarkItDown 라이브러리를 사용하여 다양한 파일 포맷을 Markdown으로 변환하고, 변환된 결과를 관리합니다. FastAPI 애플리케이션의 엔트리포인트 역할도 수행하며, 검색 및 헬스 체크 API를 포함합니다.
+문서 변환, 인덱싱, RAG(검색 증강 생성), 평가 기능을 통합 제공하는 REST API 서비스입니다. FastAPI 애플리케이션의 엔트리포인트로서, 파일 변환부터 벡터 DB 인덱싱, 질의응답까지의 전체 파이프라인을 관리합니다.
 
 ## 파일 경로
 
@@ -17,6 +17,7 @@ markitdown/app/converter.py
 - `FastAPI` 인스턴스 생성 및 설정 (Title, Version, Description from Config).
 - 정적 파일(Static Files) 마운트 (`/static`).
 - 로깅 설정 (`setup_logging`).
+- `batch_manager`, `indexer`, `rag` 등 하위 모듈과 연동.
 
 ### 2. 파일 변환 (Conversion)
 
@@ -39,19 +40,47 @@ markitdown/app/converter.py
 #### `/convert` (POST)
 - 단일 파일 업로드 및 변환.
 - 변환된 파일을 즉시 다운로드(FileResponse)하거나 JSON 결과를 반환할 수 있습니다.
+- `auto_index` 옵션을 통해 변환 후 즉시 벡터 DB에 인덱싱 가능.
 
 #### `/convert-folder` (POST)
 - 서버 내부의 `input` 폴더에 있는 모든 파일을 일괄 변환.
 - 변환 진행률 및 결과를 JSON으로 반환.
 - 대량 처리에 적합.
+- `auto_index` 옵션 지원.
+
+#### `/convert-batch` (POST)
+- 여러 파일을 한 번에 업로드하여 배치 작업으로 처리.
+- `BatchManager`를 통해 상태를 관리하며 비동기적으로 처리.
+
+#### `/batch/folder` (POST)
+- 서버 내부 폴더의 대량 파일을 배치 작업으로 등록.
+- 파일 업로드 없이 대규모 데이터셋 처리에 최적화.
+
+#### `/batch/{batch_id}` (GET, DELETE)
+- 배치 작업의 상태 조회 및 삭제.
+
+#### `/index`, `/index-folder` (POST)
+- 변환된 마크다운 파일(단일 또는 폴더)을 벡터 DB에 인덱싱.
+- `force` 옵션으로 재인덱싱 지원.
+
+#### `/query` (POST)
+- RAG 질의응답 엔드포인트.
+- 질문을 받아 관련 문서를 검색하고 LLM을 통해 답변 생성.
+- 답변과 함께 근거 문서(Sources) 반환.
 
 #### `/supported-formats` (GET)
 - 지원하는 파일 확장자 목록(config 기준)을 반환합니다.
 
 #### `/search` (GET)
 - 문서 검색 전용 엔드포인트.
-- LLM에 의한 답변 생성 없이, 벡터 DB에서 검색된 문서 청크만 반환합니다.
+- LLM 답변 생성 없이, 벡터 DB에서 검색된 문서 청크만 반환.
 - 디버깅 및 검색 품질 테스트 용도.
+
+#### `/testset/generate` (POST)
+- Ragas를 사용하여 문서 기반의 테스트셋(질문-답변 쌍) 자동 생성.
+
+#### `/evaluate` (POST)
+- 생성된 테스트셋을 사용하여 검색 성능(Recall, Precision 등) 평가.
 
 #### `/health` (GET)
 - 서비스 상태 확인 (Ollama 연결, Vector Store 상태 등).
@@ -59,6 +88,7 @@ markitdown/app/converter.py
 ### 4. 결과 관리
 - 변환 결과는 `output` 디렉토리에 `.md` 파일로 저장됩니다.
 - 변환 메타데이터(파일명, 성공 여부, 소요 시간 등)는 JSON으로 기록됩니다.
+- 배치 작업 상태는 `batch_state` 디렉토리에 JSON으로 영구 저장됩니다.
 
 ## 데이터 흐름
 
@@ -67,4 +97,5 @@ markitdown/app/converter.py
 3. `.doc`인 경우 `LibreOffice`로 `.docx` 변환
 4. `MarkItDown` 라이브러리로 텍스트 추출
 5. `output/` 폴더에 `.md` 저장
-6. JSON 결과 반환
+6. (옵션) `DocumentIndexer`를 통해 벡터 DB 인덱싱
+7. JSON 결과 반환

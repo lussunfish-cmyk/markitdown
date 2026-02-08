@@ -1,8 +1,8 @@
-# rag 구현
+# RAG 구현
 
 ## 개요
 
-RAG (Retrieval-Augmented Generation) 파이프라인의 핵심 모듈입니다. 사용자의 질문을 받아 검색(Retriever), 컨텍스트 구성, 프롬프트 생성, 그리고 LLM 답변 생성 과정을 통합적으로 제어합니다. 캐싱과 메트릭 측정을 통해 성능과 효율성을 관리합니다.
+RAG(Retrieval-Augmented Generation) 파이프라인을 구현한 모듈입니다. 사용자 질문에 대해 관련 문서를 검색하고, 이를 컨텍스트로 구성하여 LLM(Ollama)을 통해 답변을 생성합니다. 검색 품질 향상을 위한 다양한 기법(Query Rewriting, Caching, Reranking 등)이 적용되어 있습니다.
 
 ## 파일 경로
 
@@ -13,42 +13,37 @@ markitdown/app/rag.py
 ## 주요 클래스
 
 ### 1. RAGPipeline
-RAG 전체 프로세스를 조율하는 컨트롤러 클래스입니다.
 
-- **초기화**: `OllamaClient`, `VectorStore`, `Retriever` 등 필요한 컴포넌트를 설정에 맞춰 초기화합니다.
-- **주요 메서드 `query(...)`**:
-  1. **Query Rewriting**: 설정 시 LLM을 사용해 검색에 더 적합한 형태로 질의를 재작성합니다.
-  2. **Retrieval**: `Retriever`를 사용해 관련 문서 검색. 캐시(`TTLCache`)가 적용되어 동일한 검색에 대해 빠르게 응답합니다.
-  3. **Filtering**: 검색 결과 중 유사도가 너무 낮거나 품질이 떨어지는 청크를 필터링합니다.
-  4. **Context Building**: 선택된 청크들을 포맷팅하여 LLM 프롬프트에 들어갈 컨텍스트 문자열을 생성합니다.
-  5. **Prompting**: 시스템 프롬프트, 컨텍스트, 사용자 질문을 조합하여 최종 프롬프트를 완성합니다.
-  6. **Generation**: `OllamaClient`를 통해 답변 생성.
-  7. **Result Packaging**: 답변, 참조 소스, 사용된 컨텍스트, 메트릭 등을 `RAGResult` 객체로 반환합니다.
+RAG 프로세스의 전체 흐름을 제어하는 핵심 클래스입니다.
 
-### 2. RAGMetrics
-RAG 파이프라인의 각 단계별 소요 시간과 정보를 기록합니다.
-- `query_time`, `embedding_time`, `search_time`, `llm_time`
-- `num_chunks`, `context_length`, `cache_hit`
+- **주요 기능**:
+  - **Query Rewriting**: `_rewrite_query` 메서드를 통해 사용자 질문을 검색에 최적화된 형태로 변환합니다. (설정으로 활성화 가능)
+  - **Caching**: `_search_with_cache` 메서드에서 `TTLCache`를 사용하여 동일한 검색 요청에 대한 결과를 캐싱합니다.
+  - **Retrieval**: `AdvancedRetriever`를 사용하여 문서를 검색합니다. 쿼리 확장(Query Expansion)을 통해 원본 질문과 재작성된 질문을 모두 사용하여 검색 범위를 넓힙니다.
+  - **Filtering**: `_filter_low_quality_results` 메서드로 유사도가 낮은 문서를 제외합니다.
+  - **Context Building**: `_build_context` 메서드에서 검색된 문서를 LLM 프롬프트용 컨텍스트로 구성합니다. "Lost in the Middle" 현상을 방지하기 위해 중요 문서를 양 끝에 배치하는 재정렬 로직이 포함되어 있습니다.
+  - **Generation**: `_generate_answer` 또는 `_stream_answer`를 통해 LLM 답변을 생성합니다.
+  - **Metrics**: `RAGMetrics`를 통해 각 단계별 소요 시간과 사용된 청크 수 등을 측정합니다.
 
-### 3. RAGResult
-최종 반환되는 결과 구조체입니다.
-- `answer`: 생성된 답변 텍스트.
-- `sources`: 참조한 문서의 출처 정보 리스트.
-- `context_used`: 실제 프롬프트에 사용된 컨텍스트 원문.
-- `metrics`: 성능 측정 데이터.
+### 2. RAGMetrics & RAGResult
 
-## 주요 특징
-
-- **캐싱**: 검색 결과에 대해 TTL(Time To Live) 캐시를 적용하여 반복적인 질문에 대한 응답 속도를 개선했습니다.
-- **가시성**: 각 단계의 소요 시간과 캐시 적중 여부 등을 메트릭으로 제공하여 성능 튜닝이 용이합니다.
-- **유연성**: 검색기 타입, Top-K, LLM 파라미터 등을 동적으로 조절할 수 있습니다.
+- **RAGMetrics**: 쿼리 처리 시간, 임베딩 시간, 검색 시간, LLM 생성 시간 등을 기록하는 데이터 클래스입니다.
+- **RAGResult**: 최종 답변, 참조한 소스(Sources), 사용된 컨텍스트, 메타데이터 등을 포함하는 결과 객체입니다.
 
 ## 데이터 흐름
 
-1. 사용자 질문 -> `query()` 호출
-2. (옵션) 쿼리 재작성 (LLM)
-3. `Retriever`로 검색 (Vector + Keyword) -> 문서 청크 목록
-4. 청크 필터링 및 Reranking
-5. 시스템 프롬프트 + 청크 컨텍스트 + 질문 조합
-6. `OllamaClient`로 LLM 생성 요청
-7. 최종 답변 및 메타데이터 반환
+1. **질문 입력**: `query()` 메서드 호출.
+2. **쿼리 확장**: 원본 질문 + 재작성된 쿼리(Query Rewriting) 준비.
+3. **검색**: `Retriever`를 통해 관련 문서 청크 검색 (캐싱 적용).
+4. **병합 및 정렬**: 다중 쿼리 검색 결과를 병합하고 점수순 정렬.
+5. **필터링**: 품질이 낮은 결과 제외.
+6. **컨텍스트 구성**: 검색된 청크들을 프롬프트에 맞게 포맷팅 및 재배치.
+7. **프롬프트 생성**: 시스템 프롬프트 + 컨텍스트 + 질문 결합.
+8. **답변 생성**: Ollama LLM 호출 (Completion).
+9. **결과 반환**: 답변 및 출처 정보 반환.
+
+## 주요 특징
+
+- **성능 최적화**: 캐싱 및 비동기 처리를 고려한 설계.
+- **정확도 향상**: Query Rewriting, Hybrid Search, Reranking, Context Reordering 등 최신 RAG 기법 적용.
+- **관측성**: 상세한 로깅 및 메트릭 제공.

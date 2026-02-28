@@ -97,6 +97,8 @@ class VectorStoreConfig:
     """벡터 저장소 설정."""
     
     # 벡터 저장소 타입: "chroma" 또는 "faiss"
+    # FAISS: 대규모 데이터셋에 최적화, 검색 속도 ~1.9배 빠름
+    # ChromaDB: 메타데이터 관리 우수, 더 작은 데이터셋에 권장
     STORE_TYPE = os.getenv("VECTOR_STORE_TYPE", "chroma")
     
     # 저장소 경로
@@ -105,6 +107,15 @@ class VectorStoreConfig:
     
     # Chroma 특정 설정
     CHROMA_COLLECTION_NAME = os.getenv("CHROMA_COLLECTION_NAME", "documents")
+    
+    # FAISS 인덱스 타입 설정
+    # - "flat": L2 기반 순차 검색 (메모리 효율, ~40MB/10k docs@1024dim)
+    # - "ivf": Inverted File Index (빠른 검색, 메모리 효율, 10k+문서 권장)
+    # - "hnsw": 그래프 기반 (가장 빠름, 높은 메모리 사용)
+    FAISS_INDEX_TYPE = os.getenv("FAISS_INDEX_TYPE", "flat")
+    
+    # FAISS GPU 사용 여부 (Apple Silicon의 Metal은 현재 공식 미지원)
+    FAISS_USE_GPU = os.getenv("FAISS_USE_GPU", "false").lower() == "true"
     
     # 벡터 차원 (multilingual-e5-large 기준)
     EMBEDDING_DIM = int(os.getenv("EMBEDDING_DIM", "1024"))

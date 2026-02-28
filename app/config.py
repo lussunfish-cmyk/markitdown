@@ -63,13 +63,17 @@ class LMStudioConfig:
     # LLM 모델 설정 (LM Studio에서 로드된 모델)
     LLM_MODEL = os.getenv("LMSTUDIO_LLM_MODEL", "qwen3-32b")
     
-    # 임베딩 모델 설정 (mlx-embeddings 사용, LM Studio 아님)
-    # 로컬 경로 또는 Hugging Face 모델명 사용 가능
-    # 예: ~/.lmstudio/models/mlx-community/mxbai-embed-large-v1 (로컬)
-    # 또는: mlx-community/mxbai-embed-large-v1 (온라인 다운로드)
+    # 임베딩 서비스 설정 (별도 서비스로 실행, OpenAI 호환 API)
+    # 예: http://localhost:8001 (실제 서비스 URL로 변경)
+    EMBEDDING_SERVICE_BASE_URL = os.getenv(
+        "LMSTUDIO_EMBEDDING_SERVICE_URL",
+        "http://localhost:8001"
+    )
+    
+    # 임베딩 서비스에서 사용할 모델명 (API 요청시 모델 파라미터로 전송)
     EMBEDDING_MODEL = os.getenv(
         "LMSTUDIO_EMBEDDING_MODEL",
-        "mlx-community/mxbai-embed-large-v1"
+        "mxbai-embed-large-v1"
     )
     
     # 타임아웃 및 재시도 설정

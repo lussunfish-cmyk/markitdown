@@ -1,33 +1,19 @@
 """
 LM Studio API 클라이언트 구현.
 
-LM Studio는 LLM 생성용으로만 사용하고,
-임베딩은 mlx-embeddings 라이브러리를 별도로 사용합니다.
-(LM Studio는 BERT 계열 임베딩 모델을 지원하지 않음)
+LM Studio는 LLM 생성용으로만 사용합니다.
+임베딩은 별도의 OpenAI 호환 임베딩 서비스를 사용합니다 (localhost:8001 등).
 """
 
 import logging
 import json
-import os
-from pathlib import Path
-import requests  # type: ignore
 from typing import List, Optional, Generator
+import requests  # type: ignore
 
 from .config import config
 from .llm_client import LLMClient
 
 logger = logging.getLogger(__name__)
-
-# mlx-embeddings 임포트 (optional)
-try:
-    from mlx_embeddings import load, generate  # type: ignore
-    MLX_EMBEDDINGS_AVAILABLE = True
-except ImportError:
-    MLX_EMBEDDINGS_AVAILABLE = False
-    logger.warning("mlx-embeddings가 설치되지 않았습니다. 임베딩 기능을 사용하려면 'pip install mlx-embeddings'를 실행하세요.")
-    # 타입 체커를 위한 더미 정의
-    load = None  # type: ignore
-    generate = None  # type: ignore
 
 
 class LMStudioClient(LLMClient):
@@ -36,62 +22,20 @@ class LMStudioClient(LLMClient):
     def __init__(self):
         """LM Studio 클라이언트를 초기화합니다."""
         self.base_url = config.LMSTUDIO.BASE_URL.rstrip("/")
+        self.embedding_service_url = config.LMSTUDIO.EMBEDDING_SERVICE_BASE_URL.rstrip("/")
         self.embedding_model_name = config.LMSTUDIO.EMBEDDING_MODEL
         self.llm_model = config.LMSTUDIO.LLM_MODEL
         self.timeout = config.LMSTUDIO.REQUEST_TIMEOUT
         self.max_retries = config.LMSTUDIO.MAX_RETRIES
         self.retry_delay = config.LMSTUDIO.RETRY_DELAY
         
-        # 임베딩 모델 경로 확장 (~ 및 환경 변수 처리)
-        self.embedding_model_path = self._expand_model_path(self.embedding_model_name)
-        
         # LM Studio 연결 확인 (LLM 생성용)
         self._verify_connection()
         
-        # mlx-embeddings 모델 로드 (임베딩용)
-        self.embedding_model = None
-        self.embedding_processor = None
-        if MLX_EMBEDDINGS_AVAILABLE:
-            try:
-                logger.info(f"mlx-embeddings 모델 로드 중: {self.embedding_model_path}")
-                self.embedding_model, self.embedding_processor = load(self.embedding_model_path)  # type: ignore
-                logger.info(f"✓ mlx-embeddings 모델 로드 완료: {self.embedding_model_path}")
-            except Exception as e:
-                logger.error(f"✗ mlx-embeddings 모델 로드 실패: {str(e)}")
-                logger.warning("임베딩 기능이 비활성화됩니다. LLM 생성만 사용 가능합니다.")
+        # 임베딩 서비스 연결 확인
+        self._verify_embedding_service_connection()
         
-        logger.info(f"✓ LM Studio 클라이언트 초기화됨 (LLM: {self.llm_model})")
-    
-    def _expand_model_path(self, model_path: str) -> str:
-        """
-        모델 경로를 확장하고 검증합니다.
-        
-        Args:
-            model_path: 모델 경로 또는 Hugging Face 모델명
-            
-        Returns:
-            확장된 경로 또는 원본 모델명
-        """
-        # ~ (홈 디렉토리) 확장
-        expanded_path = os.path.expanduser(model_path)
-        
-        # 로컬 경로인 경우 (절대 경로 또는 상대 경로로 시작)
-        if expanded_path.startswith('/') or expanded_path.startswith('./') or expanded_path.startswith('../'):
-            path_obj = Path(expanded_path)
-            
-            # 경로가 존재하는지 확인
-            if path_obj.exists():
-                logger.info(f"오프라인 모델 경로 확인됨: {expanded_path}")
-                return str(path_obj.absolute())
-            else:
-                logger.warning(f"로컬 경로를 찾을 수 없습니다: {expanded_path}")
-                logger.warning("Hugging Face에서 온라인 다운로드를 시도합니다.")
-                # 경로가 존재하지 않으면 원본 경로 반환 (온라인 다운로드 시도)
-                return model_path
-        
-        # Hugging Face 모델명인 경우 (예: mlx-community/mxbai-embed-large-v1)
-        logger.info(f"Hugging Face 모델명 감지: {model_path}")
-        return model_path
+        logger.info(f"✓ LM Studio 클라이언트 초기화됨 (LLM: {self.llm_model}, 임베딩 서비스: {self.embedding_service_url})")
     
     def _verify_connection(self) -> None:
         """LM Studio 서버 연결을 확인합니다."""
@@ -103,10 +47,21 @@ class LMStudioClient(LLMClient):
             logger.error(f"✗ LM Studio 연결 에러: {str(e)}")
             raise RuntimeError(f"LM Studio 서버 연결 실패: {str(e)}")
     
+    def _verify_embedding_service_connection(self) -> None:
+        """임베딩 서비스 연결을 확인합니다."""
+        try:
+            response = requests.get(f"{self.embedding_service_url}/v1/models", timeout=5)
+            response.raise_for_status()
+            logger.info(f"✓ 임베딩 서비스 연결됨: {self.embedding_service_url}")
+        except Exception as e:
+            logger.error(f"✗ 임베딩 서비스 연결 에러: {str(e)}")
+            logger.warning(f"임베딩 서비스를 사용할 수 없습니다. {self.embedding_service_url}에서 서비스가 실행 중인지 확인하세요.")
+            raise RuntimeError(f"임베딩 서비스 연결 실패: {str(e)}")
+    
     def embed(self, text: str) -> List[float]:
         """
         텍스트를 위한 임베딩을 생성합니다.
-        mlx-embeddings 라이브러리를 사용합니다 (LM Studio API 아님).
+        별도의 임베딩 서비스(OpenAI 호환 API)를 사용합니다.
         
         Args:
             text: 임베딩할 텍스트
@@ -120,26 +75,27 @@ class LMStudioClient(LLMClient):
         if not text or not text.strip():
             raise ValueError("텍스트는 비어있을 수 없습니다")
         
-        if not MLX_EMBEDDINGS_AVAILABLE or self.embedding_model is None:
-            raise RuntimeError(
-                "mlx-embeddings가 설치되지 않았거나 모델 로드에 실패했습니다. "
-                "'pip install mlx-embeddings'를 실행하고 다시 시도하세요."
-            )
-        
         try:
-            # mlx-embeddings를 사용하여 임베딩 생성
-            embeddings = generate(  # type: ignore
-                self.embedding_model,
-                self.embedding_processor,
-                texts=[text],
-                normalize=True
-            )
+            # 임베딩 서비스 API 호출 (OpenAI 호환)
+            payload = {
+                "input": [text],
+                "model": self.embedding_model_name
+            }
             
-            # numpy array를 list로 변환
-            if hasattr(embeddings, 'tolist'):
-                embedding_list = embeddings[0].tolist()
-            else:
-                embedding_list = list(embeddings[0])
+            response = requests.post(
+                f"{self.embedding_service_url}/v1/embeddings",
+                json=payload,
+                timeout=self.timeout
+            )
+            response.raise_for_status()
+            
+            data = response.json()
+            
+            if "data" not in data or len(data["data"]) == 0:
+                raise RuntimeError("임베딩 응답이 없습니다")
+            
+            # OpenAI 호환 형식: data[0]["embedding"]
+            embedding_list = data["data"][0]["embedding"]
             
             return embedding_list
         
@@ -152,7 +108,7 @@ class LMStudioClient(LLMClient):
     def embed_batch(self, texts: List[str], show_progress: bool = False) -> List[List[float]]:
         """
         여러 텍스트에 대한 임베딩을 생성합니다.
-        mlx-embeddings 라이브러리를 사용하여 배치로 처리합니다.
+        임베딩 서비스에 배치로 전송합니다.
         
         Args:
             texts: 임베딩할 텍스트 목록
@@ -161,29 +117,35 @@ class LMStudioClient(LLMClient):
         Returns:
             임베딩 벡터 목록
         """
-        if not MLX_EMBEDDINGS_AVAILABLE or self.embedding_model is None:
-            raise RuntimeError(
-                "mlx-embeddings가 설치되지 않았거나 모델 로드에 실패했습니다. "
-                "'pip install mlx-embeddings'를 실행하고 다시 시도하세요."
-            )
+        if not texts:
+            return []
         
         if show_progress:
             logger.info(f"배치 임베딩 시작: {len(texts)}개 텍스트")
         
         try:
-            # mlx-embeddings로 배치 처리 (훨씬 빠름)
-            embeddings = generate(  # type: ignore
-                self.embedding_model,
-                self.embedding_processor,
-                texts=texts,
-                normalize=True
-            )
+            # 임베딩 서비스 API 호출 (OpenAI 호환)
+            payload = {
+                "input": texts,
+                "model": self.embedding_model_name
+            }
             
-            # numpy array를 list로 변환
-            if hasattr(embeddings, 'tolist'):
-                embeddings_list = embeddings.tolist()
-            else:
-                embeddings_list = [list(emb) for emb in embeddings]
+            response = requests.post(
+                f"{self.embedding_service_url}/v1/embeddings",
+                json=payload,
+                timeout=self.timeout
+            )
+            response.raise_for_status()
+            
+            data = response.json()
+            
+            if "data" not in data:
+                raise RuntimeError("임베딩 응답이 없습니다")
+            
+            # OpenAI 호환 형식: 여러 임베딩 처리
+            embeddings_list = []
+            for item in data["data"]:
+                embeddings_list.append(item["embedding"])
             
             if show_progress:
                 logger.info(f"배치 임베딩 완료: {len(embeddings_list)}개")

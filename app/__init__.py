@@ -5,7 +5,9 @@ MarkItDown RAG 패키지.
 """
 
 from .config import config, validate_config
+from .llm_client import LLMClient, get_llm_client, reset_llm_client
 from .ollama_client import OllamaClient, get_ollama_client
+from .lm_studio_client import LMStudioClient
 from .vector_store import VectorStore, ChromaVectorStore, get_vector_store
 from .embedding import TextChunker, MarkdownChunker, DocumentEmbedder, create_embedder
 from .retriever import (
@@ -39,9 +41,17 @@ __all__ = [
     "config",
     "validate_config",
     
-    # Ollama 클라이언트
+    # LLM 클라이언트 (추상화)
+    "LLMClient",
+    "get_llm_client",
+    "reset_llm_client",
+    
+    # Ollama 클라이언트 (하위 호환성)
     "OllamaClient",
     "get_ollama_client",
+    
+    # LM Studio 클라이언트
+    "LMStudioClient",
     
     # 벡터 저장소
     "VectorStore",

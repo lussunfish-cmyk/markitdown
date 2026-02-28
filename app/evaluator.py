@@ -18,7 +18,7 @@ from langchain_core.documents import Document as LangchainDocument
 from .config import config
 
 logger = logging.getLogger(__name__)
-from .ollama_client import get_ollama_client
+from .llm_client import get_llm_client
 
 from .embedding import chunk_text
 import ast
@@ -138,7 +138,7 @@ async def evaluate_retrieval_logic(testset_path: str, top_k: int = 5) -> dict:
         df['contexts'] = df['contexts'].apply(lambda x: ast.literal_eval(x) if isinstance(x, str) else x)
     
     retriever = get_retriever()
-    ollama_client = get_ollama_client()
+    llm_client = get_llm_client()
     results = []
     
     logger.info("Starting evaluation...")
@@ -160,7 +160,7 @@ async def evaluate_retrieval_logic(testset_path: str, top_k: int = 5) -> dict:
         if config.RAG.ENABLE_QUERY_REWRITING:
             try:
                 prompt = config.PROMPT.QUERY_REWRITE_TEMPLATE.format(question=question)
-                response = ollama_client.generate(prompt=prompt, temperature=0.1, num_predict=50)
+                response = llm_client.generate(prompt=prompt, temperature=0.1, num_predict=50)
                 rewritten = response.strip().strip('"')
                 if rewritten:
                     search_queries.append(rewritten)

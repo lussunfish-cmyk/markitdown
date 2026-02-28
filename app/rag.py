@@ -18,7 +18,7 @@ from functools import lru_cache
 from cachetools import TTLCache
 
 from .config import config
-from .ollama_client import get_ollama_client
+from .llm_client import get_llm_client
 from .vector_store import get_vector_store
 from .retriever import get_retriever, SearchResult
 from .schemas import RAGRequest, RAGResponse
@@ -159,8 +159,8 @@ class RAGPipeline:
         self.max_tokens = max_tokens or config.RAG.MAX_TOKENS
         self.enable_cache = enable_cache
         
-        # Ollama 클라이언트 초기화
-        self.ollama_client = get_ollama_client()
+        # LLM 클라이언트 초기화 (Ollama 또는 LM Studio)
+        self.llm_client = get_llm_client()
         
         # 벡터 저장소 초기화
         self.vector_store = get_vector_store()
@@ -478,7 +478,7 @@ class RAGPipeline:
             prompt = config.PROMPT.QUERY_REWRITE_TEMPLATE.format(question=question)
             
             # 빠른 응답을 위해 낮은 temperature 사용
-            response = self.ollama_client.generate(
+            response = self.llm_client.generate(
                 prompt=prompt,
                 temperature=0.1,
                 num_predict=50
@@ -537,7 +537,7 @@ class RAGPipeline:
             생성된 텍스트 청크
         """
         try:
-            for chunk in self.ollama_client.stream_generate(
+            for chunk in self.llm_client.stream_generate(
                 prompt=prompt,
                 temperature=self.temperature,
                 num_predict=self.max_tokens
@@ -693,7 +693,7 @@ class RAGPipeline:
             prompt_preview = prompt[:500].replace('\n', ' ')
             logger.info(f"LLM 프롬프트 전송 중 (길이: {len(prompt)}): {prompt_preview}...")
             
-            answer = self.ollama_client.generate(
+            answer = self.llm_client.generate(
                 prompt=prompt,
                 temperature=self.temperature,
                 num_predict=self.max_tokens

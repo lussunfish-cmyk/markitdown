@@ -8,11 +8,12 @@ from typing import Optional, List
 import ollama   # type: ignore
 
 from .config import config
+from .llm_client import LLMClient
 
 logger = logging.getLogger(__name__)
 
 
-class OllamaClient:
+class OllamaClient(LLMClient):
     """Ollama 서버와 상호작용하는 클라이언트."""
     
     def __init__(self):
@@ -288,10 +289,16 @@ _client: Optional[OllamaClient] = None
 
 
 def get_ollama_client() -> OllamaClient:
-    """Ollama 클라이언트 인스턴스를 가져오거나 생성합니다."""
-    global _client
+    """
+    Ollama 클라이언트 인스턴스를 가져오거나 생성합니다.
     
-    if _client is None:
-        _client = OllamaClient()
+    Note: 하위 호환성을 위해 유지됨.
+          새 코드에서는 llm_client.get_llm_client()를 사용하세요.
+    """
+    from .llm_client import get_llm_client
+    client = get_llm_client("ollama")
     
-    return _client
+    if not isinstance(client, OllamaClient):
+        raise RuntimeError("Ollama 클라이언트가 아닌 다른 클라이언트가 반환되었습니다")
+    
+    return client

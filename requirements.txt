@@ -15,3 +15,7 @@ langchain-ollama
 langchain-community
 pandas
 openpyxl
+
+# LM Studio 지원 (macOS Apple Silicon 전용)
+# mlx-embeddings는 macOS에서만 동작하며, BERT 계열 임베딩 모델을 지원합니다.
+# pip install mlx-embeddings (macOS에서만 설치)

@@ -11,44 +11,85 @@ services:
       - ./vector_store:/app/vector_store
       - ./app:/app/app
       - ./tiktoken_cache:/app/tiktoken_cache
+      # 오프라인 모델 볼륨 (필요시 사용)
+      # - ./models:/app/models
+    
+    # .env 파일에서 환경 변수 로드 (있는 경우)
+    env_file:
+      - .env
+    
     environment:
+      # ========================================
+      # Docker 컨테이너 경로 설정 (고정값)
+      # ========================================
       - MARKITDOWN_OUTPUT_DIR=/app/output
       - MARKITDOWN_INPUT_DIR=/app/input
       - BATCH_STATE_DIR=/app/batch_state
-      - OLLAMA_BASE_URL=http://host.docker.internal:11434
-      - OLLAMA_EMBEDDING_MODEL=mxbai-embed-large
-      - OLLAMA_LLM_MODEL=gemma2
       - VECTOR_STORE_DIR=/app/vector_store
       - TIKTOKEN_CACHE_DIR=/app/tiktoken_cache
-      # 오프라인 및 로컬 모델 설정S
-      - HF_HUB_OFFLINE=1
-      - TRANSFORMERS_OFFLINE=1
-      - RETRIEVER_RERANKER_MODEL=/app/models/bge-reranker-v2-m3
-      - LOG_LEVEL=INFO
+      
+      # ========================================
+      # LLM Backend 설정 (.env에서 오버라이드 가능)
+      # ========================================
+      - LLM_BACKEND_TYPE=${LLM_BACKEND_TYPE:-ollama}
+      
+      # Ollama 설정 (호스트의 Ollama 서버 사용)
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      - OLLAMA_EMBEDDING_MODEL=${OLLAMA_EMBEDDING_MODEL:-mxbai-embed-large}
+      - OLLAMA_LLM_MODEL=${OLLAMA_LLM_MODEL:-gemma2}
+      
+      # LM Studio 설정 (호스트의 LM Studio 서버 사용)
+      - LMSTUDIO_BASE_URL=${LMSTUDIO_BASE_URL:-http://host.docker.internal:1234/api}
+      - LMSTUDIO_LLM_MODEL=${LMSTUDIO_LLM_MODEL:-qwen3-32b}
+      - LMSTUDIO_EMBEDDING_MODEL=${LMSTUDIO_EMBEDDING_MODEL:-mlx-community/mxbai-embed-large-v1}
+      
+      # ========================================
+      # RAG 설정 (.env에서 오버라이드 가능)
+      # ========================================
+      - RAG_TOP_K=${RAG_TOP_K:-5}
+      - RAG_TEMPERATURE=${RAG_TEMPERATURE:-0.3}
+      - RETRIEVER_USE_RERANKER=${RETRIEVER_USE_RERANKER:-true}
+      - RETRIEVER_RERANKER_MODEL=${RETRIEVER_RERANKER_MODEL:-BAAI/bge-reranker-v2-m3}
+      
+      # ========================================
+      # 오프라인 모드 설정 (필요시 활성화)
+      # ========================================
+      # - HF_HUB_OFFLINE=1
+      # - TRANSFORMERS_OFFLINE=1
+      # - RETRIEVER_RERANKER_MODEL=/app/models/bge-reranker-v2-m3
+      
+      # ========================================
+      # 로깅 및 기타 설정
+      # ========================================
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      
+      # ========================================
+      # GPU 설정 (NVIDIA)
+      # ========================================
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+    
     restart: unless-stopped
-    networks:
-      - default
-    # 오프라인에서 동작합니다. 가장 쉬운 방법은 잠시 DNS 차단을 풀고 한 번 실행하는 것입니다.
-    # docker-compose.yml에서 dns: - 0.0.0.0 부분을 잠시 주석 처리합니다.
-    # 컨테이너를 실행하여 테스트셋 생성 등 해당 에러가 났던 기능을 한 번 실행합니다. (이때 파일이 ./tiktoken_cache에 다운로드됩니다.)
-    # 다시 dns: - 0.0.0.0 주석을 해제하고 컨테이너를 재시작합니다.
-    # 이제 다운로드된 캐시 파일을 사용하여 인터넷 연결 없이도 정상 작동합니다.
-    dns:
-      - 0.0.0.0  # DNS 해석을 불가능하게 설정
+    
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
-
-# networks:
-#   default:
-#     driver: bridge
-#     driver_opts:
-#       com.docker.network.bridge.enable_ip_masquerade: "false"
+    
+    # ========================================
+    # 오프라인 모드 (필요시 활성화)
+    # ========================================
+    # tiktoken 캐시 등 다운로드 필요한 리소스를 먼저 받은 후
+    # 완전 오프라인 환경에서 실행하려면 아래 dns 설정 주석 해제
+    # dns:
+    #   - 0.0.0.0  # DNS 차단으로 완전 오프라인 모드
+    
+    # ========================================
+    # GPU 설정 (필요시 활성화)
+    # ========================================
+    # NVIDIA GPU를 사용하는 경우 아래 주석 해제
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]

@@ -9,7 +9,7 @@ from datetime import datetime
 from pathlib import Path
 
 from .config import config
-from .ollama_client import get_ollama_client
+from .llm_client import get_llm_client
 from .schemas import DocumentChunk, DocumentMetadata
 
 logger = logging.getLogger(__name__)
@@ -383,7 +383,7 @@ class DocumentEmbedder:
         else:
             self.chunker = TextChunker()
         
-        self.ollama_client = get_ollama_client()
+        self.llm_client = get_llm_client()
     
     def embed_document(
         self,
@@ -425,7 +425,7 @@ class DocumentEmbedder:
             
             try:
                 # 임베딩 생성
-                embedding = self.ollama_client.embed(chunk_text)
+                embedding = self.llm_client.embed(chunk_text)
                 
                 # 청크 ID 생성 (source와 chunk_id 기반 해시)
                 chunk_id_str = f"{source}_{idx}"

@@ -18,7 +18,7 @@ except ImportError:
     CrossEncoder = None
 
 from .config import config
-from .ollama_client import get_ollama_client
+from .llm_client import get_llm_client
 from .vector_store import get_vector_store, VectorStore
 
 logger = logging.getLogger(__name__)
@@ -102,7 +102,7 @@ class VectorRetriever(BaseRetriever):
             vector_store: 벡터 저장소 (None이면 기본 저장소 사용)
         """
         self.vector_store = vector_store or get_vector_store()
-        self.ollama_client = get_ollama_client()
+        self.llm_client = get_llm_client()
         logger.info("✓ VectorRetriever 초기화됨")
     
     def search(self, query: str, k: int = 5) -> List[SearchResult]:
@@ -117,7 +117,7 @@ class VectorRetriever(BaseRetriever):
             검색 결과 리스트 (유사도 높은 순)
         """
         # 쿼리 임베딩 생성
-        query_embedding = self.ollama_client.embed(query)
+        query_embedding = self.llm_client.embed(query)
         
         # 벡터 검색
         raw_results = self.vector_store.search(query_embedding, k=k)

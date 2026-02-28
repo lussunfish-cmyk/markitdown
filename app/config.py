@@ -50,6 +50,45 @@ class OllamaConfig:
     RETRY_DELAY = float(os.getenv("OLLAMA_RETRY_DELAY", "1.0"))
 
 
+# ============================================================================
+# LM Studio 설정
+# ============================================================================
+
+class LMStudioConfig:
+    """LM Studio 서버 설정."""
+    
+    # LM Studio 서버 설정 (LLM 생성용)
+    BASE_URL = os.getenv("LMSTUDIO_BASE_URL", "http://localhost:1234/api")
+    
+    # LLM 모델 설정 (LM Studio에서 로드된 모델)
+    LLM_MODEL = os.getenv("LMSTUDIO_LLM_MODEL", "qwen3-32b")
+    
+    # 임베딩 모델 설정 (mlx-embeddings 사용, LM Studio 아님)
+    # 로컬 경로 또는 Hugging Face 모델명 사용 가능
+    # 예: ~/.lmstudio/models/mlx-community/mxbai-embed-large-v1 (로컬)
+    # 또는: mlx-community/mxbai-embed-large-v1 (온라인 다운로드)
+    EMBEDDING_MODEL = os.getenv(
+        "LMSTUDIO_EMBEDDING_MODEL",
+        "mlx-community/mxbai-embed-large-v1"
+    )
+    
+    # 타임아웃 및 재시도 설정
+    REQUEST_TIMEOUT = int(os.getenv("LMSTUDIO_TIMEOUT", "300"))
+    MAX_RETRIES = int(os.getenv("LMSTUDIO_MAX_RETRIES", "3"))
+    RETRY_DELAY = float(os.getenv("LMSTUDIO_RETRY_DELAY", "1.0"))
+
+
+# ============================================================================
+# LLM 백엔드 설정
+# ============================================================================
+
+class LLMBackendConfig:
+    """LLM 백엔드 선택 설정."""
+    
+    # 사용할 LLM 백엔드 ("ollama" 또는 "lmstudio")
+    BACKEND_TYPE = os.getenv("LLM_BACKEND_TYPE", "ollama")
+
+
 class VectorStoreConfig:
     """벡터 저장소 설정."""
     
@@ -316,6 +355,8 @@ class AppConfig:
     # 하위 설정 인스턴스
     LOGGING = LoggingConfig()
     OLLAMA = OllamaConfig()
+    LMSTUDIO = LMStudioConfig()
+    LLM_BACKEND = LLMBackendConfig()
     VECTOR_STORE = VectorStoreConfig()
     CHUNKING = ChunkingConfig()
     RETRIEVER = RetrieverConfig()

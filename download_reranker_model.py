@@ -7,7 +7,7 @@ from sentence_transformers import CrossEncoder
 # 기본 설정 (환경 변수로 오버라이드 가능)
 # config.py를 사용할 수 없는 빌드 단계에서 실행되므로 기본값 하드코딩 필요
 DEFAULT_MODEL_NAME = "BAAI/bge-reranker-v2-m3"
-DEFAULT_MODEL_PATH = "/app/models/bge-reranker-v2-m3"
+DEFAULT_MODEL_PATH = "./models/bge-reranker-v2-m3"
 
 MODEL_NAME = os.getenv("RETRIEVER_RERANKER_MODEL", DEFAULT_MODEL_NAME)
 MODEL_PATH = os.getenv("MODEL_DOWNLOAD_PATH", DEFAULT_MODEL_PATH)
@@ -15,7 +15,7 @@ MODEL_PATH = os.getenv("MODEL_DOWNLOAD_PATH", DEFAULT_MODEL_PATH)
 def download_model():
     """
     Reranker 모델을 다운로드하고 지정된 경로에 저장합니다.
-    Docker 빌드 과정에서 실행되어 오프라인 환경을 위한 모델 파일을 준비합니다.
+    네이티브 Python 환경에서 실행되어 오프라인 환경을 위한 모델 파일을 준비합니다.
     """
     print("=" * 60)
     print(f"Starting Model Download Task")

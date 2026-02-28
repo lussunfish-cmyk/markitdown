@@ -90,7 +90,7 @@ class LLMBackendConfig:
     """LLM 백엔드 선택 설정."""
     
     # 사용할 LLM 백엔드 ("ollama" 또는 "lmstudio")
-    BACKEND_TYPE = os.getenv("LLM_BACKEND_TYPE", "ollama")
+    BACKEND_TYPE = os.getenv("LLM_BACKEND_TYPE", "lmstudio")
 
 
 class VectorStoreConfig:
@@ -100,7 +100,7 @@ class VectorStoreConfig:
     STORE_TYPE = os.getenv("VECTOR_STORE_TYPE", "chroma")
     
     # 저장소 경로
-    PERSIST_DIR = Path(os.getenv("VECTOR_STORE_DIR", "/app/vector_store"))
+    PERSIST_DIR = Path(os.getenv("VECTOR_STORE_DIR", "./vector_store"))
     PERSIST_DIR.mkdir(parents=True, exist_ok=True)
     
     # Chroma 특정 설정
@@ -198,8 +198,8 @@ class ConversionConfig:
     """파일 변환 설정."""
     
     # 입출력 디렉토리
-    OUTPUT_DIR = Path(os.getenv("MARKITDOWN_OUTPUT_DIR", "/app/output"))
-    INPUT_DIR = Path(os.getenv("MARKITDOWN_INPUT_DIR", "/app/input"))
+    OUTPUT_DIR = Path(os.getenv("MARKITDOWN_OUTPUT_DIR", "./output"))
+    INPUT_DIR = Path(os.getenv("MARKITDOWN_INPUT_DIR", "./input"))
     
     # 디렉토리 생성
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -224,8 +224,8 @@ class IndexingConfig:
     """문서 인덱싱 설정."""
     
     # 입출력 디렉토리
-    DOCUMENT_DIR = Path(os.getenv("DOCUMENT_DIR", "/app/output"))
-    INDEX_STATE_FILE = Path(os.getenv("INDEX_STATE_FILE", "/app/vector_store/index_state.json"))
+    DOCUMENT_DIR = Path(os.getenv("DOCUMENT_DIR", "./output"))
+    INDEX_STATE_FILE = Path(os.getenv("INDEX_STATE_FILE", "./vector_store/index_state.json"))
     
     # 지원 파일 형식
     SUPPORTED_FORMATS = {".md", ".txt"}
@@ -238,7 +238,7 @@ class BatchConfig:
     """배치 처리 설정."""
     
     # 배치 상태 저장 경로
-    BATCH_STATE_DIR = Path(os.getenv("BATCH_STATE_DIR", "/app/batch_state"))
+    BATCH_STATE_DIR = Path(os.getenv("BATCH_STATE_DIR", "./batch_state"))
     BATCH_STATE_DIR.mkdir(parents=True, exist_ok=True)
     
     # 기본 배치 크기

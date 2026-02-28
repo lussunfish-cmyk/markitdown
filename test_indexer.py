@@ -36,7 +36,7 @@ def test_state_manager():
     state_manager = IndexStateManager()
     
     # 테스트 파일
-    test_file = Path("/app/output/test.md")
+    test_file = Path("./output/test.md")
     
     # 초기 상태 확인
     logger.info(f"인덱싱 여부: {state_manager.is_indexed(test_file)}")

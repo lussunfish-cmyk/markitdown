@@ -12,13 +12,18 @@ echo -e "${BLUE}=== MarkItDown 통합 테스트 시작 ===${NC}"
 
 # 1. 벡터 저장소 초기화
 echo -e "\n${BLUE}[1/5] 벡터 저장소 초기화${NC}"
-sudo rm -rf ./vector_store ./batch_state
+rm -rf ./vector_store ./batch_state
+mkdir -p ./vector_store ./batch_state ./input ./output
 echo -e "${GREEN}✅ 벡터 저장소 초기화 완료${NC}"
 sleep 1
 
-docker compose down
-docker compose up -d --build
-sleep 5
+echo -e "\n${BLUE}서버 상태 확인 (http://localhost:8000/health)${NC}"
+if ! curl -s http://localhost:8000/health > /dev/null; then
+  echo -e "${RED}❌ API 서버가 실행 중이 아닙니다. 먼저 아래 명령으로 서버를 실행하세요.${NC}"
+  echo -e "${RED}python -m uvicorn app.converter:app --host 0.0.0.0 --port 8000 --loop asyncio${NC}"
+  exit 1
+fi
+echo -e "${GREEN}✅ API 서버 실행 확인 완료${NC}"
 
 # 2. 테스트 문서 생성
 echo -e "\n${BLUE}[2/5] 테스트 문서 준비${NC}"

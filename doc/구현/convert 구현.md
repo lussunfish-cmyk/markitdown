@@ -33,7 +33,7 @@ markitdown/app/converter.py
 
 #### LibreOffice 변환
 - MarkItDown이 `.doc` (구형 바이너리 포맷)를 직접 지원하지 않을 수 있어, LibreOffice를 중간 변환기로 사용합니다.
-- Docker 환경에서 `libreoffice` 패키지가 필요합니다.
+- 네이티브 실행 환경에서 `libreoffice` 설치가 필요합니다.
 
 ### 3. API 엔드포인트 (Endpoints)
 

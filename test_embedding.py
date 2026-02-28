@@ -32,10 +32,7 @@ def save_chunks_to_csv(chunks: list, filename: str) -> Path:
         저장된 파일 경로
     """
     # debug 디렉토리 설정 및 생성
-    if Path("/app").exists():
-        debug_dir = Path("/app/debug")
-    else:
-        debug_dir = Path("./debug")
+    debug_dir = Path("./debug")
     
     debug_dir.mkdir(parents=True, exist_ok=True)
     
@@ -231,7 +228,7 @@ def test_real_markdown_file():
     print("="*80)
     
     # 테스트 파일 경로
-    test_file = Path("/app/output/ToR574_INT_VoLTE_ViLTE_interoperability_test_description_4G_5G_ph1_rev_clean.md")
+    test_file = Path("./output/ToR574_INT_VoLTE_ViLTE_interoperability_test_description_4G_5G_ph1_rev_clean.md")
     
     if not test_file.exists():
         print(f"\n⚠ 테스트 파일이 존재하지 않습니다: {test_file}")
@@ -376,10 +373,7 @@ def main():
     print(f"실패: {failed}")
     
     # CSV 파일 목록 확인
-    if Path("/app").exists():
-        debug_dir = Path("/app/debug")
-    else:
-        debug_dir = Path("./debug")
+    debug_dir = Path("./debug")
     
     csv_files = list(debug_dir.glob("test_*.csv"))
     

@@ -113,9 +113,17 @@ def convert_doc_to_docx(doc_path: Path) -> tuple[Optional[Path], str]:
         (.docx 파일 경로 또는 None, 에러 메시지 또는 빈 문자열)의 튜플
     """
     try:
+        # LibreOffice 경로 찾기: PATH에 있으면 사용, 없으면 macOS 기본 위치 확인
+        libreoffice_cmd = shutil.which("libreoffice") or shutil.which("soffice")
+        if not libreoffice_cmd and os.path.exists("/Applications/LibreOffice.app/Contents/MacOS/soffice"):
+            libreoffice_cmd = "/Applications/LibreOffice.app/Contents/MacOS/soffice"
+        
+        if not libreoffice_cmd:
+            return None, "LibreOffice를 찾을 수 없습니다"
+        
         result = subprocess.run(
             [
-                "libreoffice",
+                libreoffice_cmd,
                 "--headless",
                 "--convert-to", "docx",
                 "--outdir", str(doc_path.parent),

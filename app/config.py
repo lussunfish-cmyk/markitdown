@@ -58,7 +58,7 @@ class LMStudioConfig:
     """LM Studio 서버 설정."""
     
     # LM Studio 서버 설정 (LLM 생성용)
-    BASE_URL = os.getenv("LMSTUDIO_BASE_URL", "http://localhost:1234/api")
+    BASE_URL = os.getenv("LMSTUDIO_BASE_URL", "http://localhost:1234")
     
     # LLM 모델 설정 (LM Studio에서 로드된 모델)
     LLM_MODEL = os.getenv("LMSTUDIO_LLM_MODEL", "qwen3-32b")

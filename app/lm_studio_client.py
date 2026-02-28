@@ -28,14 +28,18 @@ class LMStudioClient(LLMClient):
         self.timeout = config.LMSTUDIO.REQUEST_TIMEOUT
         self.max_retries = config.LMSTUDIO.MAX_RETRIES
         self.retry_delay = config.LMSTUDIO.RETRY_DELAY
+        self.embedding_service_available = False  # 임베딩 서비스 가용 여부 플래그
         
         # LM Studio 연결 확인 (LLM 생성용)
         self._verify_connection()
         
-        # 임베딩 서비스 연결 확인
+        # 임베딩 서비스 연결 확인 (선택적, 실패해도 API는 계속 실행)
         self._verify_embedding_service_connection()
         
-        logger.info(f"✓ LM Studio 클라이언트 초기화됨 (LLM: {self.llm_model}, 임베딩 서비스: {self.embedding_service_url})")
+        if self.embedding_service_available:
+            logger.info(f"✓ LM Studio 클라이언트 초기화됨 (LLM: {self.llm_model}, 임베딩 서비스: {self.embedding_service_url})")
+        else:
+            logger.info(f"✓ LM Studio 클라이언트 초기화됨 (LLM: {self.llm_model}, 임베딩 서비스: 미사용)")
     
     def _verify_connection(self) -> None:
         """LM Studio 서버 연결을 확인합니다."""
@@ -48,15 +52,31 @@ class LMStudioClient(LLMClient):
             raise RuntimeError(f"LM Studio 서버 연결 실패: {str(e)}")
     
     def _verify_embedding_service_connection(self) -> None:
-        """임베딩 서비스 연결을 확인합니다."""
+        """임베딩 서비스 연결을 확인합니다 (선택적)."""
         try:
-            response = requests.get(f"{self.embedding_service_url}/v1/models", timeout=5)
-            response.raise_for_status()
+            # 먼저 /v1/models 엔드포인트 시도
+            try:
+                response = requests.get(f"{self.embedding_service_url}/v1/models", timeout=5)
+                response.raise_for_status()
+            except Exception:
+                # /v1/models가 없으면, 간단한 임베딩 요청으로 서비스 확인
+                payload = {
+                    "input": ["test"],
+                    "model": self.embedding_model_name
+                }
+                response = requests.post(
+                    f"{self.embedding_service_url}/v1/embeddings",
+                    json=payload,
+                    timeout=5
+                )
+                response.raise_for_status()
+            
             logger.info(f"✓ 임베딩 서비스 연결됨: {self.embedding_service_url}")
+            self.embedding_service_available = True
         except Exception as e:
-            logger.error(f"✗ 임베딩 서비스 연결 에러: {str(e)}")
-            logger.warning(f"임베딩 서비스를 사용할 수 없습니다. {self.embedding_service_url}에서 서비스가 실행 중인지 확인하세요.")
-            raise RuntimeError(f"임베딩 서비스 연결 실패: {str(e)}")
+            logger.warning(f"⚠ 임베딩 서비스를 사용할 수 없습니다: {str(e)}")
+            logger.warning(f"   인덱싱/검색 기능을 사용하려면 {self.embedding_service_url}에서 임베딩 서비스가 실행 중이어야 합니다")
+            self.embedding_service_available = False
     
     def embed(self, text: str) -> List[float]:
         """
@@ -72,6 +92,12 @@ class LMStudioClient(LLMClient):
         Raises:
             RuntimeError: 임베딩 생성이 실패한 경우
         """
+        if not self.embedding_service_available:
+            raise RuntimeError(
+                f"임베딩 서비스를 사용할 수 없습니다. "
+                f"{self.embedding_service_url}에서 OpenAI 호환 임베딩 서비스가 실행 중인지 확인하세요."
+            )
+        
         if not text or not text.strip():
             raise ValueError("텍스트는 비어있을 수 없습니다")
         
@@ -117,6 +143,12 @@ class LMStudioClient(LLMClient):
         Returns:
             임베딩 벡터 목록
         """
+        if not self.embedding_service_available:
+            raise RuntimeError(
+                f"임베딩 서비스를 사용할 수 없습니다. "
+                f"{self.embedding_service_url}에서 OpenAI 호환 임베딩 서비스가 실행 중인지 확인하세요."
+            )
+        
         if not texts:
             return []
         
@@ -198,21 +230,16 @@ class LMStudioClient(LLMClient):
             raise ValueError("프롬프트는 비어있을 수 없습니다")
         
         try:
+            # 기본 페이로드 - 필수 필드만
             payload = {
                 "model": self.llm_model,
-                "messages": [
-                    {"role": "user", "content": prompt}
-                ],
-                "temperature": temperature or config.RAG.TEMPERATURE,
-                "max_tokens": num_predict or config.RAG.MAX_TOKENS,
-                "stream": False
+                "input": prompt
             }
             
-            if top_p is not None:
-                payload["top_p"] = top_p
+            logger.info(f"LM Studio 요청 페이로드: {payload}")
             
             response = requests.post(
-                f"{self.base_url}/v1/chat/completions",
+                f"{self.base_url}/api/v1/chat",
                 json=payload,
                 timeout=self.timeout
             )
@@ -220,10 +247,32 @@ class LMStudioClient(LLMClient):
             
             data = response.json()
             
-            if "choices" not in data or len(data["choices"]) == 0:
+            logger.info(f"LM Studio 전체 응답: {data}")
+            
+            # 에러 응답 확인
+            if "error" in data:
+                error_msg = data.get("error", "Unknown error")
+                logger.error(f"LM Studio 에러: {error_msg}")
+                raise RuntimeError(f"LM Studio 에러: {error_msg}")
+            
+            if "output" not in data or len(data["output"]) == 0:
+                logger.error(f"LM Studio 응답에 output이 없습니다. 응답: {data}")
                 raise RuntimeError("생성 결과에 응답이 없습니다")
             
-            return data["choices"][0]["message"]["content"].strip()
+            # output 배열에서 type이 "message"인 항목의 content 추출
+            for output in data["output"]:
+                if isinstance(output, dict) and output.get("type") == "message":
+                    content = output.get("content", "").strip()
+                    if content:
+                        return content
+            
+            # message 타입이 없으면 첫 번째 output 사용
+            if isinstance(data["output"][0], dict):
+                content = data["output"][0].get("content", "").strip()
+                if content:
+                    return content
+            
+            raise RuntimeError(f"응답 형식 오류: {data}")
         
         except ValueError:
             raise
@@ -257,43 +306,49 @@ class LMStudioClient(LLMClient):
             raise ValueError("프롬프트는 비어있을 수 없습니다")
         
         try:
+            # 기본 페이로드 - 필수 필드만
             payload = {
                 "model": self.llm_model,
-                "messages": [
-                    {"role": "user", "content": prompt}
-                ],
-                "temperature": temperature or config.RAG.TEMPERATURE,
-                "max_tokens": num_predict or config.RAG.MAX_TOKENS,
-                "stream": True
+                "input": prompt
             }
             
-            if top_p is not None:
-                payload["top_p"] = top_p
+            logger.info(f"LM Studio 스트리밍 요청 페이로드: {payload}")
             
+            # LM Studio API는 스트리밍을 지원하지 않으므로 일반 요청 사용
             response = requests.post(
-                f"{self.base_url}/v1/chat/completions",
+                f"{self.base_url}/api/v1/chat",
                 json=payload,
-                timeout=self.timeout,
-                stream=True
+                timeout=self.timeout
             )
             response.raise_for_status()
             
-            for line in response.iter_lines():
-                if line:
-                    line_str = line.decode('utf-8')
-                    if line_str.startswith('data: '):
-                        data_str = line_str[6:]
-                        if data_str.strip() == '[DONE]':
-                            break
-                        
-                        try:
-                            data = json.loads(data_str)
-                            if "choices" in data and len(data["choices"]) > 0:
-                                delta = data["choices"][0].get("delta", {})
-                                if "content" in delta:
-                                    yield delta["content"]
-                        except json.JSONDecodeError:
-                            continue
+            data = response.json()
+            
+            logger.info(f"LM Studio 스트리밍 전체 응답: {data}")
+            
+            # 에러 응답 확인
+            if "error" in data:
+                error_msg = data.get("error", "Unknown error")
+                logger.error(f"LM Studio 에러: {error_msg}")
+                raise RuntimeError(f"LM Studio 에러: {error_msg}")
+            
+            if "output" not in data or len(data["output"]) == 0:
+                logger.error(f"LM Studio 응답에 output이 없습니다. 응답: {data}")
+                raise RuntimeError("생성 결과에 응답이 없습니다")
+            
+            # output 배열에서 type이 "message"인 항목의 content 추출
+            content = ""
+            for output in data["output"]:
+                if isinstance(output, dict) and output.get("type") == "message":
+                    content = output.get("content", "").strip()
+                    break
+            
+            if not content and isinstance(data["output"][0], dict):
+                content = data["output"][0].get("content", "").strip()
+            
+            # 전체 텍스트를 한 번에 yield (스트리밍 시뮬레이션)
+            if content:
+                yield content
         
         except ValueError:
             raise

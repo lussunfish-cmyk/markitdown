@@ -81,6 +81,19 @@ class LMStudioConfig:
     MAX_RETRIES = int(os.getenv("LMSTUDIO_MAX_RETRIES", "3"))
     RETRY_DELAY = float(os.getenv("LMSTUDIO_RETRY_DELAY", "1.0"))
 
+    # Thinking 억제 설정 (Qwen3 계열에서 /no_think 키워드 활용)
+    NO_THINK_ENABLED = os.getenv("LMSTUDIO_NO_THINK_ENABLED", "true").lower() == "true"
+    NO_THINK_SUFFIX = os.getenv("LMSTUDIO_NO_THINK_SUFFIX", "/no_think")
+    NO_THINK_EXTRA_SUFFIX = os.getenv("LMSTUDIO_NO_THINK_EXTRA_SUFFIX", "/nothinking")
+    NO_THINK_SYSTEM_PROMPT = os.getenv(
+        "LMSTUDIO_NO_THINK_SYSTEM_PROMPT",
+        (
+            "You are a concise assistant. Always respond directly and concisely "
+            "without any thinking, reasoning steps, <think> blocks, or internal monologue "
+            "unless explicitly asked. Never reveal internal thoughts."
+        )
+    )
+
 
 # ============================================================================
 # LLM 백엔드 설정

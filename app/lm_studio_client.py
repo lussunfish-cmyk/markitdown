@@ -28,6 +28,10 @@ class LMStudioClient(LLMClient):
         self.timeout = config.LMSTUDIO.REQUEST_TIMEOUT
         self.max_retries = config.LMSTUDIO.MAX_RETRIES
         self.retry_delay = config.LMSTUDIO.RETRY_DELAY
+        self.no_think_enabled = config.LMSTUDIO.NO_THINK_ENABLED
+        self.no_think_suffix = config.LMSTUDIO.NO_THINK_SUFFIX.strip()
+        self.no_think_extra_suffix = config.LMSTUDIO.NO_THINK_EXTRA_SUFFIX.strip()
+        self.no_think_system_prompt = config.LMSTUDIO.NO_THINK_SYSTEM_PROMPT.strip()
         self.embedding_service_available = False  # 임베딩 서비스 가용 여부 플래그
         
         # LM Studio 연결 확인 (LLM 생성용)
@@ -40,6 +44,28 @@ class LMStudioClient(LLMClient):
             logger.info(f"✓ LM Studio 클라이언트 초기화됨 (LLM: {self.llm_model}, 임베딩 서비스: {self.embedding_service_url})")
         else:
             logger.info(f"✓ LM Studio 클라이언트 초기화됨 (LLM: {self.llm_model}, 임베딩 서비스: 미사용)")
+
+    def _ensure_suffix_token(self, text: str, token: str) -> str:
+        """텍스트 끝에 suffix 토큰을 중복 없이 추가합니다."""
+        if not token:
+            return text
+        if token in text:
+            return text
+        return f"{text.rstrip()} {token}".strip()
+
+    def _apply_no_think_prompt_rules(self, prompt: str) -> str:
+        """LM Studio 요청 전 thinking 억제 규칙을 적용합니다."""
+        normalized_prompt = prompt.strip()
+        if not self.no_think_enabled:
+            return normalized_prompt
+
+        normalized_prompt = self._ensure_suffix_token(normalized_prompt, self.no_think_suffix)
+        normalized_prompt = self._ensure_suffix_token(normalized_prompt, self.no_think_extra_suffix)
+
+        if self.no_think_system_prompt and self.no_think_system_prompt not in normalized_prompt:
+            normalized_prompt = f"{self.no_think_system_prompt}\n\n{normalized_prompt}"
+
+        return normalized_prompt
     
     def _verify_connection(self) -> None:
         """LM Studio 서버 연결을 확인합니다."""
@@ -228,12 +254,14 @@ class LMStudioClient(LLMClient):
         """
         if not prompt or not prompt.strip():
             raise ValueError("프롬프트는 비어있을 수 없습니다")
+
+        request_prompt = self._apply_no_think_prompt_rules(prompt)
         
         try:
             # 기본 페이로드 - 필수 필드만
             payload = {
                 "model": self.llm_model,
-                "input": prompt
+                "input": request_prompt
             }
             
             logger.info(f"LM Studio 요청 페이로드: {payload}")
@@ -304,12 +332,14 @@ class LMStudioClient(LLMClient):
         """
         if not prompt or not prompt.strip():
             raise ValueError("프롬프트는 비어있을 수 없습니다")
+
+        request_prompt = self._apply_no_think_prompt_rules(prompt)
         
         try:
             # 기본 페이로드 - 필수 필드만
             payload = {
                 "model": self.llm_model,
-                "input": prompt
+                "input": request_prompt
             }
             
             logger.info(f"LM Studio 스트리밍 요청 페이로드: {payload}")

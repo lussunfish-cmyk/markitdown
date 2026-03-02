@@ -12,6 +12,8 @@ import shutil
 import subprocess
 import tempfile
 import time
+import zipfile
+import xml.etree.ElementTree as ET
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, List, Dict, Any
@@ -97,6 +99,58 @@ def cleanup_temp_file(file_path: Optional[Path]) -> None:
         except Exception:
             pass
 
+
+def _docx_paragraph_text(paragraph: ET.Element, ns: dict[str, str]) -> str:
+    texts: list[str] = []
+    for node in paragraph.findall(".//w:t", ns):
+        if node.text:
+            texts.append(node.text)
+    return "".join(texts).strip()
+
+
+def extract_docx_markdown_fallback(file_path: Path) -> tuple[Optional[str], str]:
+    ns = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+
+    try:
+        with zipfile.ZipFile(file_path, "r") as zf:
+            try:
+                xml_bytes = zf.read("word/document.xml")
+            except KeyError:
+                return None, "DOCX에 word/document.xml이 없습니다"
+
+        root = ET.fromstring(xml_bytes)
+        body = root.find("w:body", ns)
+        if body is None:
+            return None, "DOCX 본문을 찾을 수 없습니다"
+
+        lines: list[str] = []
+        for child in list(body):
+            tag = child.tag.split("}")[-1]
+            if tag == "p":
+                paragraph_text = _docx_paragraph_text(child, ns)
+                if paragraph_text:
+                    lines.append(paragraph_text)
+            elif tag == "tbl":
+                for row in child.findall("w:tr", ns):
+                    row_cells: list[str] = []
+                    for cell in row.findall("w:tc", ns):
+                        cell_parts: list[str] = []
+                        for p in cell.findall("w:p", ns):
+                            cell_text = _docx_paragraph_text(p, ns)
+                            if cell_text:
+                                cell_parts.append(cell_text)
+                        row_cells.append(" ".join(cell_parts).strip())
+                    if any(row_cells):
+                        lines.append("| " + " | ".join(row_cells) + " |")
+
+        markdown_text = "\n\n".join(line for line in lines if line)
+        if not markdown_text.strip():
+            return None, "DOCX fallback 추출 결과가 비어 있습니다"
+
+        return markdown_text.replace('\f', ''), ""
+    except Exception as e:
+        return None, f"DOCX fallback 추출 에러: {str(e)}"
+
 # ============================================================================
 # 파일 변환 함수
 # ============================================================================
@@ -173,7 +227,19 @@ def extract_markdown(file_path: Path) -> tuple[Optional[str], str]:
         # 폼 피드 문자 제거
         markdown_text = markdown_text.replace('\f', '')
         return markdown_text, ""
-    except Exception as e:
+    except BaseException as e:
+        if isinstance(e, (KeyboardInterrupt, SystemExit, GeneratorExit)):
+            raise
+
+        if file_path.suffix.lower() == ".docx":
+            fallback_text, fallback_error = extract_docx_markdown_fallback(file_path)
+            if fallback_text:
+                logger.warning(
+                    f"⚠️ markitdown 변환 실패로 DOCX fallback 사용: {file_path.name} ({str(e)[:200]})"
+                )
+                return fallback_text, ""
+            return None, f"마크다운 추출 에러: {str(e)} | fallback 실패: {fallback_error}"
+
         return None, f"마크다운 추출 에러: {str(e)}"
 
 
@@ -267,7 +333,10 @@ def convert_single_file(
         
         return True, output_filename, "성공적으로 변환됨", duration
 
-    except Exception as e:
+    except BaseException as e:
+        if isinstance(e, (KeyboardInterrupt, SystemExit, GeneratorExit)):
+            raise
+
         duration = time.time() - start_time
         error_msg = f"예상치 못한 에러: {str(e)}"
         if log_progress:

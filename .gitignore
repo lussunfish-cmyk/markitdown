@@ -212,3 +212,4 @@ debug/
 batch_state/
 vector_store/
 .DS_Store
+logs/
